@@ -1,0 +1,23 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "ai-pm",
+	"compatibility_date": "2026-05-08",
+	"compatibility_flags": [
+		"nodejs_als"
+	],
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare"
+	},
+	"workers_dev": true,
+	"preview_urls": true,
+	"d1_databases": [
+		{
+			"binding": "ai_pm_db",
+			"database_name": "ai-pm-db",
+			"database_id": "069b6cf8-69b2-4d69-a12a-5117751e99af",
+			"remote": true
+		}
+	]
+}
