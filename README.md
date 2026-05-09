@@ -1,42 +1,104 @@
-# sv
+# AI PM
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+AI PM is a logged-in kanban workspace built with SvelteKit, Better Auth, Drizzle ORM, and Cloudflare D1.
 
-## Creating a project
+## Features
 
-If you're seeing this, you've probably already done this step. Congrats!
+- Email/password registration, login, and logout
+- Private user-owned boards
+- Board create, rename, and delete
+- Column create, rename, recolor, delete, and drag reorder
+- Text card create, edit, recolor, delete, reorder, and cross-column drag
+- Pasted image cards compressed in-browser and stored in D1 as data URLs
+- Image copy control with browser clipboard support and a fallback opener
 
-```sh
-# create a new project
-npx sv create my-app
-```
+## Stack
 
-To recreate this project with the same configuration:
+- SvelteKit 2 and Svelte 5
+- Bun
+- Better Auth
+- Drizzle ORM
+- Cloudflare Workers and D1
+- `svelte-dnd-action`
 
-```sh
-# recreate this project
-bun x sv@0.15.3 create --template minimal --types ts --add better-auth="demo:password" mcp="ide:vscode+setup:remote" drizzle="database:d1" --install bun .
-```
+## Setup
 
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
+Install dependencies:
 
 ```sh
-npm run build
+bun install
 ```
 
-You can preview the production build with `npm run preview`.
+Create `.env` from `.env.example` and fill in local/private values:
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+```sh
+cp .env.example .env
+```
+
+Required environment values include:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_DATABASE_ID`
+- `CLOUDFLARE_D1_TOKEN`
+- `ORIGIN`
+- `BETTER_AUTH_SECRET`
+
+Do not commit `.env` or real secrets.
+
+## Development
+
+Generate Cloudflare Worker types when configuration changes:
+
+```sh
+bun run gen
+```
+
+Start the development server:
+
+```sh
+bun run dev
+```
+
+## Database
+
+The Drizzle schema is in `src/lib/server/db/schema.ts`.
+
+Generate migrations:
+
+```sh
+bun run db:generate
+```
+
+Apply migrations through the configured Drizzle/Cloudflare workflow:
+
+```sh
+bun run db:migrate
+```
+
+Remote D1 migration application should be an explicit deployment step.
+
+## Verification
+
+Run source checks:
+
+```sh
+bun run check
+```
+
+Build for production:
+
+```sh
+bun run build
+```
+
+The build targets Cloudflare Workers through `@sveltejs/adapter-cloudflare`.
+
+## Public Repository Hygiene
+
+This repository is intended to be public. Keep these out of commits:
+
+- `.env` and non-example env files
+- `.wrangler/`
+- `.svelte-kit/`
+- `node_modules/`
+- Local databases, logs, and generated build output

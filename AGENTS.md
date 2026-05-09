@@ -1,31 +1,23 @@
-## Project Configuration
+## Project Notes
 
-- **Language**: TypeScript
-- **Package Manager**: bun
-- **Add-ons**: better-auth, mcp, drizzle
+- Stack: SvelteKit 2, Svelte 5, TypeScript, Bun, Better Auth, Drizzle ORM, Cloudflare D1.
+- Package manager: Bun. Prefer `bun install`, `bun run check`, and `bun run build`.
+- Runtime target: Cloudflare Workers via `@sveltejs/adapter-cloudflare`.
+- D1 binding name: `ai_pm_db`.
+- Auth: Better Auth email/password in `src/lib/server/auth.ts`.
+- Database schema: `src/lib/server/db/schema.ts`; generated auth tables live in `src/lib/server/db/auth.schema.ts`.
+- Migrations: generated under `drizzle/` with `bun run db:generate`.
 
----
+## Safety
 
-You are able to use the Svelte MCP server, where you have access to comprehensive Svelte 5 and SvelteKit documentation. Here's how to use the available tools effectively:
+- Do not commit `.env`, `.env.*` except intentional examples, `.wrangler/`, `.svelte-kit/`, `node_modules/`, or build output.
+- Treat Cloudflare account IDs, D1 tokens, Better Auth secrets, and local database state as confidential.
+- Before public pushes, inspect staged files with `git diff --cached --name-only` and scan for secret-like values.
+- Do not revert unrelated user edits. If `AGENTS.md` or docs are already dirty, update them directly instead of resetting.
 
-## Available Svelte MCP Tools:
+## Verification
 
-### 1. list-sections
-
-Use this FIRST to discover all available documentation sections. Returns a structured list with titles, use_cases, and paths.
-When asked about Svelte or SvelteKit topics, ALWAYS use this tool at the start of the chat to find relevant sections.
-
-### 2. get-documentation
-
-Retrieves full documentation content for specific sections. Accepts single or multiple sections.
-After calling the list-sections tool, you MUST analyze the returned documentation sections (especially the use_cases field) and then use the get-documentation tool to fetch ALL documentation sections that are relevant for the user's task.
-
-### 3. svelte-autofixer
-
-Analyzes Svelte code and returns issues and suggestions.
-You MUST use this tool whenever writing Svelte code before sending it to the user. Keep calling it until no issues or suggestions are returned.
-
-### 4. playground-link
-
-Generates a Svelte Playground link with the provided code.
-After completing the code, ask the user if they want a playground link. Only call this tool after user confirmation and NEVER if code was written to files in their project.
+- Run `bun run check` before committing source changes.
+- Run `bun run build` for route, adapter, schema, or deployment-related changes.
+- If `wrangler types --check` reports stale types, run `bun run gen`.
+- If generated `.svelte-kit` output causes type noise, remove ignored `.svelte-kit/`, run `bun run gen`, and rerun checks.
