@@ -1,9 +1,6 @@
 name: Build release
 
 on:
-  push:
-    branches:
-      - master
   workflow_dispatch:
 
 permissions:
@@ -52,4 +49,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           files: release/*.exe
           body: |
-            Automated Windows executable build for commit ${{ github.sha }}.
+            Manual Windows executable build for commit ${{ github.sha }}.
