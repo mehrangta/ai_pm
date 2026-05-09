@@ -7,6 +7,10 @@ const handleBetterAuth: Handle = async ({ event, resolve }) => {
 	const d1 = event.platform?.env?.ai_pm_db;
 
 	if (!d1) {
+		if (building || process.env.TAURI_BUILD === 'true' || process.env.NODE_ENV !== 'production') {
+			return resolve(event);
+		}
+
 		throw new Error('D1 binding "ai_pm_db" not found - are you running with wrangler?');
 	}
 

@@ -1,35 +1,73 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
-	import { invalidateAll } from '$app/navigation';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
-	import { dndzone } from 'svelte-dnd-action';
-	import type { ActionData, PageServerData } from './$types';
+	import { SHADOW_ITEM_MARKER_PROPERTY_NAME, dndzone } from 'svelte-dnd-action';
+	import {
+		boardAction,
+		getBoard,
+		ApiError,
+		signOut,
+		type BoardColumn,
+		type BoardCard
+	} from '$lib/api';
 
-	type BoardColumn = PageServerData['columns'][number];
-	type BoardCard = BoardColumn['cards'][number];
+	type BoardInfo = {
+		id: string;
+		title: string;
+		userId: string;
+	};
+
+	type OrderAction = 'reorderColumns' | 'moveCards';
+
+	type OrderSaveState = {
+		inFlight: boolean;
+		pending: Record<string, unknown> | null;
+	};
 
 	const flipDurationMs = 160;
 	const maxImageBytes = 1_500_000;
+	const orderSaveState: Record<OrderAction, OrderSaveState> = {
+		reorderColumns: { inFlight: false, pending: null },
+		moveCards: { inFlight: false, pending: null }
+	};
 
-	let { data, form }: { data: PageServerData; form: ActionData } = $props();
+	let board = $state<BoardInfo | null>(null);
 	let columns = $state<BoardColumn[]>([]);
 	let selectedColumnId = $state('');
+	let notice = $state('');
 	let pasteError = $state('');
 	let orderError = $state('');
 	let copyMessage = $state('');
 
-	$effect(() => {
-		columns = data.columns.map((column) => ({
-			...column,
-			cards: column.cards.map((card) => ({ ...card }))
-		}));
+	onMount(() => {
+		void loadBoard();
 	});
 
-	$effect(() => {
-		if (!data.columns.some((column) => column.id === selectedColumnId)) {
-			selectedColumnId = data.columns[0]?.id ?? '';
+	const currentBoardId = () => page.params.boardId ?? '';
+
+	async function loadBoard() {
+		try {
+			const data = await getBoard(currentBoardId());
+			board = data.board;
+			columns = data.columns.map((column) => ({
+				...column,
+				cards: column.cards.map((card) => ({ ...card }))
+			}));
+
+			if (!columns.some((column) => column.id === selectedColumnId)) {
+				selectedColumnId = columns[0]?.id ?? '';
+			}
+		} catch (error) {
+			if (error instanceof ApiError && error.status === 401) {
+				await goto('/login');
+				return;
+			}
+
+			notice = error instanceof Error ? error.message : 'Board could not be loaded';
 		}
-	});
+	}
 
 	function handleColumnConsider(event: CustomEvent<{ items: BoardColumn[] }>) {
 		columns = event.detail.items;
@@ -37,9 +75,15 @@
 
 	function handleColumnFinalize(event: CustomEvent<{ items: BoardColumn[] }>) {
 		columns = event.detail.items;
-		void postAction('reorderColumns', {
-			order: JSON.stringify(columns.map((column) => column.id))
+		persistOrder('reorderColumns', {
+			order: columns.map((column) => column.id)
 		});
+	}
+
+	function isShadowCard(card: BoardCard) {
+		return Boolean((card as BoardCard & { [SHADOW_ITEM_MARKER_PROPERTY_NAME]?: boolean })[
+			SHADOW_ITEM_MARKER_PROPERTY_NAME
+		]);
 	}
 
 	function handleCardConsider(columnId: string, event: CustomEvent<{ items: BoardCard[] }>) {
@@ -55,36 +99,83 @@
 
 	function handleCardFinalize(columnId: string, event: CustomEvent<{ items: BoardCard[] }>) {
 		handleCardConsider(columnId, event);
-		void postAction('moveCards', {
-			columns: JSON.stringify(
-				columns.map((column) => ({
-					id: column.id,
-					cardIds: column.cards.map((card) => card.id)
-				}))
-			)
+		persistOrder('moveCards', {
+			columns: columns.map((column) => ({
+				id: column.id,
+				cardIds: column.cards.filter((card) => !isShadowCard(card)).map((card) => card.id)
+			}))
 		});
 	}
 
-	async function postAction(action: string, fields: Record<string, string>) {
+	function persistOrder(action: OrderAction, fields: Record<string, unknown>) {
+		notice = '';
 		orderError = '';
-		const body = new FormData();
+		orderSaveState[action].pending = fields;
 
-		for (const [key, value] of Object.entries(fields)) {
-			body.set(key, value);
+		if (!orderSaveState[action].inFlight) {
+			void flushOrder(action);
+		}
+	}
+
+	async function flushOrder(action: OrderAction) {
+		const state = orderSaveState[action];
+		state.inFlight = true;
+
+		while (state.pending) {
+			const fields = state.pending;
+			state.pending = null;
+
+			try {
+				await boardAction(currentBoardId(), { action, ...fields });
+			} catch {
+				if (!state.pending) {
+					orderError = 'The new order could not be saved.';
+					await loadBoard();
+				}
+			}
 		}
 
-		const response = await fetch(`?/${action}`, {
-			method: 'POST',
-			body
-		});
+		state.inFlight = false;
+	}
 
-		if (!response.ok) {
-			orderError = 'The new order could not be saved.';
-			await invalidateAll();
-			return;
+	async function postAction(action: string, fields: Record<string, unknown>) {
+		notice = '';
+		orderError = '';
+
+		try {
+			await boardAction(currentBoardId(), { action, ...fields });
+			await loadBoard();
+		} catch (error) {
+			orderError = error instanceof Error ? error.message : 'Board update failed';
+			await loadBoard();
 		}
+	}
 
-		await invalidateAll();
+	async function submitBoardForm(event: SubmitEvent, action: string) {
+		event.preventDefault();
+		const form = event.currentTarget as HTMLFormElement;
+		const values = Object.fromEntries(
+			Array.from(new FormData(form).entries()).map(([key, value]) => [key, value.toString()])
+		);
+
+		await postAction(action, values);
+
+		if (!orderError && (action === 'createColumn' || action === 'createCard')) {
+			form.reset();
+		}
+	}
+
+	async function handleSignOut(event: SubmitEvent) {
+		event.preventDefault();
+		await signOut();
+		await goto('/login');
+	}
+
+	function resetTransientMessages() {
+		notice = '';
+		pasteError = '';
+		orderError = '';
+		copyMessage = '';
 	}
 
 	async function handlePaste(event: ClipboardEvent) {
@@ -95,8 +186,7 @@
 		if (!item) return;
 
 		event.preventDefault();
-		pasteError = '';
-		copyMessage = '';
+		resetTransientMessages();
 
 		if (!selectedColumnId) {
 			pasteError = 'Create a column before pasting an image.';
@@ -118,27 +208,18 @@
 				return;
 			}
 
-			const body = new FormData();
-			body.set('columnId', selectedColumnId);
-			body.set('description', 'Pasted image');
-			body.set('color', '#ffffff');
-			body.set('dataUrl', image.dataUrl);
-			body.set('mimeType', image.mimeType);
-			body.set('byteSize', String(image.byteSize));
-			body.set('width', String(image.width));
-			body.set('height', String(image.height));
-
-			const response = await fetch('?/createImageCard', {
-				method: 'POST',
-				body
+			await boardAction(currentBoardId(), {
+				action: 'createImageCard',
+				columnId: selectedColumnId,
+				description: 'Pasted image',
+				color: '#ffffff',
+				dataUrl: image.dataUrl,
+				mimeType: image.mimeType,
+				byteSize: image.byteSize,
+				width: image.width,
+				height: image.height
 			});
-
-			if (!response.ok) {
-				pasteError = 'Image is too large or unsupported.';
-				return;
-			}
-
-			await invalidateAll();
+			await loadBoard();
 		} catch {
 			pasteError = 'The pasted image could not be compressed.';
 		}
@@ -191,24 +272,79 @@
 		});
 	}
 
+	async function dataUrlToRgba(dataUrl: string) {
+		const response = await fetch(dataUrl);
+		const blob = await response.blob();
+		const bitmap = await createImageBitmap(blob);
+		const canvas = document.createElement('canvas');
+		canvas.width = bitmap.width;
+		canvas.height = bitmap.height;
+		const context = canvas.getContext('2d');
+
+		if (!context) {
+			throw new Error('Canvas is unavailable');
+		}
+
+		context.drawImage(bitmap, 0, 0);
+		const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height);
+
+		return {
+			rgba: new Uint8Array(pixels.data),
+			width: bitmap.width,
+			height: bitmap.height
+		};
+	}
+
+	async function copyImageWithTauri(card: BoardCard) {
+		const [{ isTauri }, { Image }, { writeImage }] = await Promise.all([
+			import('@tauri-apps/api/core'),
+			import('@tauri-apps/api/image'),
+			import('@tauri-apps/plugin-clipboard-manager')
+		]);
+
+		if (!isTauri()) {
+			return false;
+		}
+
+		const { rgba, width, height } = await dataUrlToRgba(card.image!.dataUrl);
+		const image = await Image.new(rgba, width, height);
+
+		try {
+			await writeImage(image);
+		} finally {
+			await image.close();
+		}
+
+		return true;
+	}
+
+	async function copyImageWithBrowserClipboard(card: BoardCard) {
+		if (!('ClipboardItem' in window) || !navigator.clipboard?.write) {
+			return false;
+		}
+
+		const response = await fetch(card.image!.dataUrl);
+		const blob = await response.blob();
+		await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+
+		return true;
+	}
+
 	async function copyImage(card: BoardCard) {
 		copyMessage = '';
 
 		if (!card.image) return;
 
 		try {
-			if ('ClipboardItem' in window && navigator.clipboard?.write) {
-				const response = await fetch(card.image.dataUrl);
-				const blob = await response.blob();
-				await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+			if ((await copyImageWithTauri(card)) || (await copyImageWithBrowserClipboard(card))) {
 				copyMessage = 'Image copied.';
 				return;
 			}
 		} catch {
-			copyMessage = 'Clipboard copy failed; opened image instead.';
+			// Fall through to the user-facing unsupported message.
 		}
 
-		window.open(card.image.dataUrl, '_blank', 'noopener,noreferrer');
+		copyMessage = 'Image clipboard copy is not available in this environment.';
 	}
 </script>
 
@@ -218,7 +354,7 @@
 	<header class="topbar">
 		<div>
 			<a class="back-link" href="/boards">Boards</a>
-			<h1>{data.board.title}</h1>
+			<h1>{board?.title ?? 'Loading board'}</h1>
 			<p>{columns.length} columns</p>
 		</div>
 
@@ -226,13 +362,13 @@
 			<label>
 				Paste target
 				<select bind:value={selectedColumnId} disabled={!columns.length}>
-					{#each columns as column}
+					{#each columns as column (column.id)}
 						<option value={column.id}>{column.title}</option>
 					{/each}
 				</select>
 			</label>
 
-			<form method="post" action="?/signOut" use:enhance>
+			<form onsubmit={handleSignOut}>
 				<button class="ghost">Sign out</button>
 			</form>
 		</div>
@@ -240,16 +376,16 @@
 
 	<section class="create-column" aria-labelledby="new-column-title">
 		<h2 id="new-column-title">New column</h2>
-		<form method="post" action="?/createColumn" use:enhance>
+		<form onsubmit={(event) => submitBoardForm(event, 'createColumn')}>
 			<input name="title" placeholder="Column title" maxlength="100" required />
 			<input type="color" name="color" value="#f4f4f5" aria-label="Column color" />
 			<button class="primary">Add column</button>
 		</form>
 	</section>
 
-	{#if form?.message || pasteError || orderError || copyMessage}
-		<div class:error-state={form?.message || pasteError || orderError} class="notice">
-			{form?.message || pasteError || orderError || copyMessage}
+	{#if notice || pasteError || orderError || copyMessage}
+		<div class:error-state={notice || pasteError || orderError} class="notice">
+			{notice || pasteError || orderError || copyMessage}
 		</div>
 	{/if}
 
@@ -263,20 +399,20 @@
 		{#each columns as column (column.id)}
 			<article class="column" style:background-color={column.color} animate:flip={{ duration: flipDurationMs }}>
 				<header class="column-header">
-					<form method="post" action="?/updateColumn" use:enhance>
+					<form onsubmit={(event) => submitBoardForm(event, 'updateColumn')}>
 						<input type="hidden" name="columnId" value={column.id} />
 						<input name="title" value={column.title} maxlength="100" aria-label="Column title" required />
 						<input type="color" name="color" value={column.color} aria-label="Column color" />
 						<button>Save</button>
 					</form>
 
-					<form method="post" action="?/deleteColumn" use:enhance>
+					<form onsubmit={(event) => submitBoardForm(event, 'deleteColumn')}>
 						<input type="hidden" name="columnId" value={column.id} />
 						<button class="danger">Delete</button>
 					</form>
 				</header>
 
-				<form class="new-card" method="post" action="?/createCard" use:enhance>
+				<form class="new-card" onsubmit={(event) => submitBoardForm(event, 'createCard')}>
 					<input type="hidden" name="columnId" value={column.id} />
 					<textarea name="description" rows="2" maxlength="2000" placeholder="Add a card" required></textarea>
 					<div>
@@ -307,7 +443,7 @@
 								</button>
 							{/if}
 
-							<form method="post" action="?/updateCard" use:enhance>
+							<form onsubmit={(event) => submitBoardForm(event, 'updateCard')}>
 								<input type="hidden" name="cardId" value={card.id} />
 								<textarea name="description" rows="3" maxlength="2000" required>{card.description}</textarea>
 								<div class="card-actions">
@@ -316,7 +452,7 @@
 								</div>
 							</form>
 
-							<form method="post" action="?/deleteCard" use:enhance>
+							<form onsubmit={(event) => submitBoardForm(event, 'deleteCard')}>
 								<input type="hidden" name="cardId" value={card.id} />
 								<button class="danger full">Delete card</button>
 							</form>

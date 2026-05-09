@@ -1,18 +1,102 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
-	import type { ActionData, PageServerData } from './$types';
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import {
+		createBoard,
+		deleteBoard,
+		ApiError,
+		getBoards,
+		renameBoard,
+		signOut,
+		type AppUser,
+		type BoardSummary
+	} from '$lib/api';
 
-	let { data, form }: { data: PageServerData; form: ActionData } = $props();
+	let user = $state<AppUser | null>(null);
+	let boards = $state<BoardSummary[]>([]);
+	let message = $state('');
+	let loading = $state(true);
+
+	onMount(() => {
+		void loadBoards();
+	});
+
+	async function loadBoards() {
+		message = '';
+		loading = true;
+
+		try {
+			const data = await getBoards();
+			user = data.user;
+			boards = data.boards;
+		} catch (error) {
+			if (error instanceof ApiError && error.status === 401) {
+				await goto('/login');
+				return;
+			}
+
+			message = error instanceof Error ? error.message : 'Boards could not be loaded';
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function handleCreate(event: SubmitEvent) {
+		event.preventDefault();
+		const form = event.currentTarget as HTMLFormElement;
+		const title = new FormData(form).get('title')?.toString().trim() ?? '';
+
+		try {
+			const result = await createBoard(title);
+			await goto(`/boards/${result.boardId}`);
+		} catch (error) {
+			message = error instanceof Error ? error.message : 'Board could not be created';
+		}
+	}
+
+	async function handleRename(event: SubmitEvent) {
+		event.preventDefault();
+		const form = event.currentTarget as HTMLFormElement;
+		const formData = new FormData(form);
+
+		try {
+			await renameBoard(
+				formData.get('boardId')?.toString() ?? '',
+				formData.get('title')?.toString().trim() ?? ''
+			);
+			await loadBoards();
+		} catch (error) {
+			message = error instanceof Error ? error.message : 'Board could not be renamed';
+		}
+	}
+
+	async function handleDelete(event: SubmitEvent) {
+		event.preventDefault();
+		const boardId = new FormData(event.currentTarget as HTMLFormElement).get('boardId')?.toString() ?? '';
+
+		try {
+			await deleteBoard(boardId);
+			await loadBoards();
+		} catch (error) {
+			message = error instanceof Error ? error.message : 'Board could not be deleted';
+		}
+	}
+
+	async function handleSignOut(event: SubmitEvent) {
+		event.preventDefault();
+		await signOut();
+		await goto('/login');
+	}
 </script>
 
 <main class="boards-page">
 	<header class="topbar">
 		<div>
-			<p class="eyebrow">Signed in as {data.user.email}</p>
+			<p class="eyebrow">Signed in as {user?.email ?? '...'}</p>
 			<h1>Boards</h1>
 		</div>
 
-		<form method="post" action="?/signOut" use:enhance>
+		<form onsubmit={handleSignOut}>
 			<button class="ghost">Sign out</button>
 		</form>
 	</header>
@@ -23,41 +107,47 @@
 			<p>Start a separate workspace for each project, sprint, or personal plan.</p>
 		</div>
 
-		<form method="post" action="?/createBoard" use:enhance>
+		<form onsubmit={handleCreate}>
 			<input name="title" placeholder="Board title" maxlength="120" required />
 			<button class="primary">Create</button>
 		</form>
 	</section>
 
-	{#if form?.message}
-		<p class="form-error">{form.message}</p>
+	{#if message}
+		<p class="form-error">{message}</p>
 	{/if}
 
 	<section class="board-grid" aria-label="Your boards">
-		{#each data.boards as board}
-			<article class="board-card">
-				<a class="board-link" href={`/boards/${board.id}`}>
-					<span>{board.title}</span>
-					<small>Open board</small>
-				</a>
-
-				<form class="rename" method="post" action="?/renameBoard" use:enhance>
-					<input type="hidden" name="boardId" value={board.id} />
-					<input name="title" value={board.title} maxlength="120" aria-label="Board title" required />
-					<button>Rename</button>
-				</form>
-
-				<form method="post" action="?/deleteBoard" use:enhance>
-					<input type="hidden" name="boardId" value={board.id} />
-					<button class="danger">Delete</button>
-				</form>
-			</article>
-		{:else}
+		{#if loading}
 			<div class="empty-state">
-				<h2>No boards yet</h2>
-				<p>Create your first board to add columns, cards, and pasted image notes.</p>
+				<h2>Loading boards</h2>
 			</div>
-		{/each}
+		{:else}
+			{#each boards as board (board.id)}
+				<article class="board-card">
+					<a class="board-link" href={`/boards/${board.id}`}>
+						<span>{board.title}</span>
+						<small>Open board</small>
+					</a>
+
+					<form class="rename" onsubmit={handleRename}>
+						<input type="hidden" name="boardId" value={board.id} />
+						<input name="title" value={board.title} maxlength="120" aria-label="Board title" required />
+						<button>Rename</button>
+					</form>
+
+					<form onsubmit={handleDelete}>
+						<input type="hidden" name="boardId" value={board.id} />
+						<button class="danger">Delete</button>
+					</form>
+				</article>
+			{:else}
+				<div class="empty-state">
+					<h2>No boards yet</h2>
+					<p>Create your first board to add columns, cards, and pasted image notes.</p>
+				</div>
+			{/each}
+		{/if}
 	</section>
 </main>
 

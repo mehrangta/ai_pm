@@ -1,4 +1,7 @@
-import adapter from '@sveltejs/adapter-cloudflare';
+import cloudflareAdapter from '@sveltejs/adapter-cloudflare';
+import staticAdapter from '@sveltejs/adapter-static';
+
+const isTauriBuild = process.env.TAURI_BUILD === 'true' || process.argv.includes('tauri');
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -7,7 +10,12 @@ const config = {
 		runes: ({ filename }) => filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 	},
 	kit: {
-		adapter: adapter(),
+		adapter: isTauriBuild
+			? staticAdapter({
+					fallback: 'index.html',
+					strict: false
+				})
+			: cloudflareAdapter(),
 		typescript: {
 			config: (config) => ({
 				...config,

@@ -1,8 +1,36 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
-	import type { ActionData } from './$types';
+	import { goto } from '$app/navigation';
+	import { signInEmail, signUpEmail } from '$lib/api';
 
-	let { form }: { form: ActionData } = $props();
+	let message = $state('');
+	let pending = $state(false);
+
+	async function handleSubmit(event: SubmitEvent) {
+		event.preventDefault();
+		message = '';
+		pending = true;
+
+		const form = event.currentTarget as HTMLFormElement;
+		const submitter = event.submitter as HTMLButtonElement | null;
+		const formData = new FormData(form);
+		const email = formData.get('email')?.toString().trim() ?? '';
+		const password = formData.get('password')?.toString() ?? '';
+		const name = formData.get('name')?.toString().trim() ?? '';
+
+		try {
+			if (submitter?.value === 'register') {
+				await signUpEmail(email, password, name);
+			} else {
+				await signInEmail(email, password);
+			}
+
+			await goto('/boards');
+		} catch (error) {
+			message = error instanceof Error ? error.message : 'Authentication failed';
+		} finally {
+			pending = false;
+		}
+	}
 </script>
 
 <main class="login-shell">
@@ -12,7 +40,7 @@
 			<h1 id="login-title">Sign in or create an account</h1>
 		</div>
 
-		<form method="post" action="?/signInEmail" use:enhance>
+		<form onsubmit={handleSubmit}>
 			<label>
 				Email
 				<input type="email" name="email" autocomplete="email" required />
@@ -28,13 +56,13 @@
 				<input name="name" autocomplete="name" placeholder="Required for registration" />
 			</label>
 
-			{#if form?.message}
-				<p class="form-error">{form.message}</p>
+			{#if message}
+				<p class="form-error">{message}</p>
 			{/if}
 
 			<div class="actions">
-				<button class="primary">Sign in</button>
-				<button class="secondary" formaction="?/signUpEmail">Register</button>
+				<button class="primary" disabled={pending}>Sign in</button>
+				<button class="secondary" type="submit" value="register" disabled={pending}>Register</button>
 			</div>
 		</form>
 	</section>

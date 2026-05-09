@@ -10,13 +10,18 @@
 		"binding": "ASSETS",
 		"directory": ".svelte-kit/cloudflare"
 	},
+	"vars": {
+		"ORIGIN": "https://your-worker.workers.dev",
+		"PUBLIC_API_BASE_URL": "https://your-worker.workers.dev",
+		"CORS_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,tauri://localhost,http://tauri.localhost,https://your-worker.workers.dev"
+	},
 	"workers_dev": true,
 	"preview_urls": true,
 	"d1_databases": [
 		{
 			"binding": "ai_pm_db",
 			"database_name": "ai-pm-db",
-			"database_id": "069b6cf8-69b2-4d69-a12a-5117751e99af",
+			"database_id": "00000000-0000-0000-0000-000000000000",
 			"remote": true
 		}
 	]
