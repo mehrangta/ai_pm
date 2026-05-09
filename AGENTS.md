@@ -20,6 +20,7 @@
 - When the user gives a visual reference, preserve the intended text, labels, and workflow names unless they explicitly ask to rename them.
 - When editing Svelte UI, prefer existing project patterns and use `shadcn-svelte` where it fits the requested interface.
 - For Tauri clipboard features, ensure matching capability permissions are present in `src-tauri/capabilities/default.json`.
+- Do not start a dev server for routine validation unless the user explicitly asks for one; build the desktop executable instead when a runnable app artifact is needed.
 
 ## Safety
 
@@ -33,7 +34,7 @@
 - Run `bun run check` before committing source changes.
 - Run `bun run build` for route, adapter, schema, or deployment-related changes.
 - Run `cargo check` from `src-tauri/` for Rust/Tauri source changes.
-- Run `bun tauri build --no-bundle` to produce a local desktop executable at `src-tauri/target/release/app.exe`.
+- Run `bun tauri build --no-bundle` to produce a local desktop executable at `src-tauri/target/release/app.exe`; prefer this over starting a dev server.
 - For Android/Tauri mobile changes, run `bun tauri android build --apk` when the local Android toolchain and Windows symlink permission are available.
 - If `wrangler types --check` reports stale types, run `bun run gen`.
 - If generated `.svelte-kit` output causes type noise, remove ignored `.svelte-kit/`, run `bun run gen`, and rerun checks.
