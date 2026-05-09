@@ -40,6 +40,7 @@
 	let pasteError = $state('');
 	let orderError = $state('');
 	let copyMessage = $state('');
+	let query = $state('');
 
 	onMount(() => {
 		void loadBoard();
@@ -151,18 +152,52 @@
 		}
 	}
 
-	async function submitBoardForm(event: SubmitEvent, action: string) {
-		event.preventDefault();
-		const form = event.currentTarget as HTMLFormElement;
-		const values = Object.fromEntries(
-			Array.from(new FormData(form).entries()).map(([key, value]) => [key, value.toString()])
-		);
+	async function createColumnFromPrompt() {
+		const title = window.prompt('Column title')?.trim();
 
-		await postAction(action, values);
+		if (!title) return;
 
-		if (!orderError && (action === 'createColumn' || action === 'createCard')) {
-			form.reset();
-		}
+		await postAction('createColumn', { title, color: '#2b2a2a' });
+	}
+
+	async function updateColumnFromPrompt(column: BoardColumn) {
+		const title = window.prompt('Column title', column.title)?.trim();
+
+		if (!title || title === column.title) return;
+
+		await postAction('updateColumn', { columnId: column.id, title, color: column.color });
+	}
+
+	async function deleteColumnWithConfirm(column: BoardColumn) {
+		if (!window.confirm(`Delete "${column.title}" and its cards?`)) return;
+
+		await postAction('deleteColumn', { columnId: column.id });
+	}
+
+	async function createCardFromPrompt(column: BoardColumn) {
+		const description = window.prompt('Card description')?.trim();
+
+		if (!description) return;
+
+		await postAction('createCard', {
+			columnId: column.id,
+			description,
+			color: safeColor(column.color, '#abd600')
+		});
+	}
+
+	async function updateCardFromPrompt(card: BoardCard) {
+		const description = window.prompt('Card description', card.description)?.trim();
+
+		if (!description || description === card.description) return;
+
+		await postAction('updateCard', { cardId: card.id, description, color: card.color });
+	}
+
+	async function deleteCardWithConfirm(card: BoardCard) {
+		if (!window.confirm('Delete this card?')) return;
+
+		await postAction('deleteCard', { cardId: card.id });
 	}
 
 	async function handleSignOut(event: SubmitEvent) {
@@ -346,16 +381,46 @@
 
 		copyMessage = 'Image clipboard copy is not available in this environment.';
 	}
+
+	function shortId(id: string) {
+		return id.replace(/-/g, '').slice(0, 6).toUpperCase();
+	}
+
+	function safeColor(color: string | null | undefined, fallback = '#abd600') {
+		return /^#[0-9a-f]{6}$/i.test(color ?? '') ? color : fallback;
+	}
+
+	function cardKind(card: BoardCard) {
+		return card.image ? 'Image' : 'Card';
+	}
+
+	function matchesQuery(card: BoardCard) {
+		const value = query.trim().toLowerCase();
+
+		return (
+			!value ||
+			card.description.toLowerCase().includes(value) ||
+			shortId(card.id).toLowerCase().includes(value)
+		);
+	}
 </script>
 
 <svelte:window onpaste={handlePaste} />
 
 <main class="board-page">
 	<header class="topbar">
-		<div>
+		<div class="brand-lockup">
 			<a class="back-link" href="/boards">Boards</a>
-			<h1>{board?.title ?? 'Loading board'}</h1>
-			<p>{columns.length} columns</p>
+			<div>
+				<p class="eyebrow">Board</p>
+				<h1>{board?.title ?? 'Loading board'}</h1>
+			</div>
+		</div>
+
+		<div class="search-box">
+			<span aria-hidden="true">/</span>
+			<input bind:value={query} placeholder="Search cards" aria-label="Search cards" />
+			<span class="cursor" aria-hidden="true">_</span>
 		</div>
 
 		<div class="top-actions">
@@ -369,19 +434,10 @@
 			</label>
 
 			<form onsubmit={handleSignOut}>
-				<button class="ghost">Sign out</button>
+				<button class="sign-out" aria-label="Sign out" title="Sign out">Sign out</button>
 			</form>
 		</div>
 	</header>
-
-	<section class="create-column" aria-labelledby="new-column-title">
-		<h2 id="new-column-title">New column</h2>
-		<form onsubmit={(event) => submitBoardForm(event, 'createColumn')}>
-			<input name="title" placeholder="Column title" maxlength="100" required />
-			<input type="color" name="color" value="#f4f4f5" aria-label="Column color" />
-			<button class="primary">Add column</button>
-		</form>
-	</section>
 
 	{#if notice || pasteError || orderError || copyMessage}
 		<div class:error-state={notice || pasteError || orderError} class="notice">
@@ -389,154 +445,265 @@
 		</div>
 	{/if}
 
-	<section
-		class="columns"
-		aria-label="Kanban columns"
-		use:dndzone={{ items: columns, flipDurationMs, type: 'columns' }}
-		onconsider={handleColumnConsider}
-		onfinalize={handleColumnFinalize}
-	>
-		{#each columns as column (column.id)}
-			<article class="column" style:background-color={column.color} animate:flip={{ duration: flipDurationMs }}>
-				<header class="column-header">
-					<form onsubmit={(event) => submitBoardForm(event, 'updateColumn')}>
-						<input type="hidden" name="columnId" value={column.id} />
-						<input name="title" value={column.title} maxlength="100" aria-label="Column title" required />
-						<input type="color" name="color" value={column.color} aria-label="Column color" />
-						<button>Save</button>
-					</form>
-
-					<form onsubmit={(event) => submitBoardForm(event, 'deleteColumn')}>
-						<input type="hidden" name="columnId" value={column.id} />
-						<button class="danger">Delete</button>
-					</form>
-				</header>
-
-				<form class="new-card" onsubmit={(event) => submitBoardForm(event, 'createCard')}>
-					<input type="hidden" name="columnId" value={column.id} />
-					<textarea name="description" rows="2" maxlength="2000" placeholder="Add a card" required></textarea>
-					<div>
-						<input type="color" name="color" value="#ffffff" aria-label="Card color" />
-						<button class="primary">Add card</button>
-					</div>
-				</form>
-
-				<div
-					class="cards"
-					use:dndzone={{ items: column.cards, flipDurationMs, type: 'cards' }}
-					onconsider={(event: CustomEvent<{ items: BoardCard[] }>) =>
-						handleCardConsider(column.id, event)}
-					onfinalize={(event: CustomEvent<{ items: BoardCard[] }>) =>
-						handleCardFinalize(column.id, event)}
+	<div class="board-shell">
+		<section
+			class="columns"
+			aria-label="Kanban columns"
+			use:dndzone={{ items: columns, flipDurationMs, type: 'columns' }}
+			onconsider={handleColumnConsider}
+			onfinalize={handleColumnFinalize}
+		>
+			{#each columns as column (column.id)}
+				<article
+					class="column"
+					style:--column-color={safeColor(column.color)}
+					animate:flip={{ duration: flipDurationMs }}
 				>
-					{#each column.cards as card (card.id)}
-						<article class="card" style:background-color={card.color} animate:flip={{ duration: flipDurationMs }}>
-							{#if card.image}
-								<img
-									src={card.image.dataUrl}
-									alt={card.description}
-									width={card.image.width}
-									height={card.image.height}
-								/>
-								<button class="copy-button" type="button" onclick={() => copyImage(card)}>
-									Copy image
-								</button>
-							{/if}
+					<header class="column-header">
+						<div class="column-heading">
+							<span class="status-dot" aria-hidden="true"></span>
+							<div>
+								<h2>{column.title}</h2>
+								<p>{column.cards.filter(matchesQuery).length} cards</p>
+							</div>
+						</div>
 
-							<form onsubmit={(event) => submitBoardForm(event, 'updateCard')}>
-								<input type="hidden" name="cardId" value={card.id} />
-								<textarea name="description" rows="3" maxlength="2000" required>{card.description}</textarea>
-								<div class="card-actions">
-									<input type="color" name="color" value={card.color} aria-label="Card color" />
-									<button>Save</button>
+						<div class="column-meta">
+							<span>{column.cards.filter(matchesQuery).length}</span>
+							<button type="button" class="small-button" onclick={() => updateColumnFromPrompt(column)}>Edit</button>
+							<button type="button" class="small-button danger" onclick={() => deleteColumnWithConfirm(column)}>
+								Delete
+							</button>
+						</div>
+					</header>
+
+					<div
+						class="cards"
+						use:dndzone={{ items: column.cards, flipDurationMs, type: 'cards' }}
+						onconsider={(event: CustomEvent<{ items: BoardCard[] }>) =>
+							handleCardConsider(column.id, event)}
+						onfinalize={(event: CustomEvent<{ items: BoardCard[] }>) =>
+							handleCardFinalize(column.id, event)}
+					>
+						{#each column.cards.filter(matchesQuery) as card (card.id)}
+							<article
+								class="card"
+								style:--card-color={safeColor(card.color, '#8b5cf6')}
+								animate:flip={{ duration: flipDurationMs }}
+							>
+								<div class="card-gloss" aria-hidden="true"></div>
+								<div class="card-topline">
+									<span class="tag">{cardKind(card)}</span>
+									<span class="card-id">#{shortId(card.id)}</span>
 								</div>
-							</form>
+								<h3>{card.description}</h3>
 
-							<form onsubmit={(event) => submitBoardForm(event, 'deleteCard')}>
-								<input type="hidden" name="cardId" value={card.id} />
-								<button class="danger full">Delete card</button>
-							</form>
-						</article>
-					{/each}
+								{#if card.image}
+									<img
+										src={card.image.dataUrl}
+										alt={card.description}
+										width={card.image.width}
+										height={card.image.height}
+									/>
+									<button class="copy-button" type="button" onclick={() => copyImage(card)}>
+										Copy image
+									</button>
+								{/if}
+
+								<div class="card-actions">
+									<button type="button" class="small-button" onclick={() => updateCardFromPrompt(card)}>
+										Edit
+									</button>
+									<button type="button" class="small-button danger" onclick={() => deleteCardWithConfirm(card)}>
+										Delete
+									</button>
+								</div>
+							</article>
+						{/each}
+					</div>
+
+					<button type="button" class="add-card-button" onclick={() => createCardFromPrompt(column)}>
+						Add card
+					</button>
+				</article>
+			{:else}
+				<div class="empty-board">
+					<h2>Add a column to start</h2>
+					<p>Cards and pasted images need a column destination.</p>
 				</div>
-			</article>
-		{:else}
-			<div class="empty-board">
-				<h2>Add a column to start</h2>
-				<p>Cards and pasted images need a column destination.</p>
-			</div>
-		{/each}
-	</section>
+			{/each}
+
+			<button type="button" class="add-column-panel" onclick={createColumnFromPrompt} aria-label="Add column">
+				<span>+</span>
+			</button>
+		</section>
+	</div>
 </main>
 
 <style>
 	.board-page {
-		display: grid;
-		grid-template-rows: auto auto auto 1fr;
-		gap: 18px;
+		--surface-container-lowest: #0e0e0e;
+		--surface: #141313;
+		--surface-container: #201f20;
+		--surface-container-low: #1c1b1c;
+		--surface-container-high: #2b2a2a;
+		--surface-container-highest: #353435;
+		--surface-bright: #3a3939;
+		--on-surface: #e5e2e1;
+		--on-surface-variant: #c8c5cb;
+		--outline: #919095;
+		--outline-variant: #47464b;
+		--tertiary: #abd600;
+		--accent-violet: #8b5cf6;
+		--error: #ffb4ab;
+		display: flex;
+		flex-direction: column;
 		min-height: 100vh;
-		padding: 20px;
+		background:
+			linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%),
+			linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06)),
+			var(--surface-container-lowest);
+		background-size:
+			100% 2px,
+			3px 100%,
+			auto;
+		color: var(--on-surface);
 		overflow: hidden;
+		font-family:
+			Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 	}
 
-	.topbar,
-	.create-column {
+	.topbar {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 16px;
+		min-height: 64px;
+		padding: 10px 24px;
+		border-bottom: 1px solid var(--outline-variant);
+		background: var(--surface-container);
+		box-shadow:
+			inset 0 -1px 0 rgba(255, 255, 255, 0.05),
+			0 8px 24px rgba(0, 0, 0, 0.28);
+		z-index: 10;
+	}
+
+	.brand-lockup {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		min-width: 0;
 	}
 
 	.back-link {
-		color: #0f766e;
-		font-size: 0.9rem;
+		min-height: 38px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 2px;
+		padding: 9px 12px;
+		background: var(--surface-container-low);
+		color: var(--on-surface);
 		font-weight: 750;
 		text-decoration: none;
+		white-space: nowrap;
+		transition:
+			transform 150ms ease,
+			border-color 150ms ease,
+			background 150ms ease,
+			color 150ms ease;
 	}
 
 	h1,
 	h2,
+	h3,
 	p {
 		margin: 0;
 	}
 
 	h1 {
-		margin-top: 4px;
-		font-size: clamp(1.8rem, 5vw, 3.1rem);
-		line-height: 1;
+		max-width: 42vw;
+		color: var(--tertiary);
+		font-size: 1.5rem;
+		font-weight: 800;
+		line-height: 1.1;
 		overflow-wrap: anywhere;
 	}
 
-	.topbar p {
-		margin-top: 6px;
-		color: #64748b;
+	h2 {
+		color: var(--on-surface);
+		font-size: 0.82rem;
+		line-height: 1rem;
+		text-transform: uppercase;
+	}
+
+	h3 {
+		position: relative;
+		z-index: 1;
+		color: var(--on-surface);
+		font-size: 0.98rem;
+		font-weight: 650;
+		line-height: 1.35;
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
+	}
+
+	.eyebrow {
+		margin-bottom: 3px;
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+	}
+
+	.search-box {
+		display: flex;
+		align-items: center;
+		width: min(340px, 30vw);
+		min-width: 220px;
+		padding: 7px 10px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 2px;
+		background: var(--surface-container-lowest);
+		box-shadow:
+			inset 0 0 4px rgba(0, 0, 0, 0.5),
+			inset 0 1px 2px rgba(0, 0, 0, 0.8);
+		color: var(--on-surface-variant);
+	}
+
+	.search-box:focus-within {
+		border-color: var(--tertiary);
+		box-shadow: 0 0 8px rgba(171, 214, 0, 0.4);
+	}
+
+	.search-box input {
+		width: 100%;
+		border: 0;
+		padding: 0 8px;
+		background: transparent;
+	}
+
+	.cursor {
+		color: var(--tertiary);
+		animation: pulse 1.2s infinite;
 	}
 
 	.top-actions {
 		display: flex;
-		align-items: end;
+		align-items: center;
 		gap: 10px;
 	}
 
 	label {
 		display: grid;
 		gap: 6px;
-		color: #475569;
-		font-size: 0.82rem;
-		font-weight: 750;
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.66rem;
+		font-weight: 600;
+		text-transform: uppercase;
 	}
 
-	.create-column {
-		padding: 14px;
-		border: 1px solid #d8d9d2;
-		border-radius: 8px;
-		background: #ffffff;
-	}
-
-	.create-column form,
 	.column-header,
-	.column-header form,
-	.new-card div,
 	.card-actions,
 	.top-actions form {
 		display: flex;
@@ -544,145 +711,232 @@
 	}
 
 	input,
-	textarea,
 	select {
 		min-width: 0;
-		border: 1px solid #cbd5d1;
-		border-radius: 7px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 2px;
 		padding: 9px 10px;
-		background: rgba(255, 255, 255, 0.9);
-		color: #1f2933;
-	}
-
-	textarea {
-		width: 100%;
-		resize: vertical;
-	}
-
-	input[type='color'] {
-		width: 42px;
-		min-width: 42px;
-		padding: 3px;
+		background: var(--surface-container-lowest);
+		color: var(--on-surface);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.75rem;
 	}
 
 	input:focus,
-	textarea:focus,
 	select:focus {
-		border-color: #0f766e;
-		outline: 3px solid rgba(15, 118, 110, 0.14);
+		border-color: var(--tertiary);
+		outline: 2px solid rgba(171, 214, 0, 0.25);
 	}
 
 	button {
 		min-height: 38px;
-		border: 1px solid #cbd5d1;
-		border-radius: 7px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 2px;
 		padding: 8px 11px;
-		background: #ffffff;
-		color: #1f2933;
+		background: var(--surface-container-low);
+		color: var(--on-surface);
 		font-weight: 750;
 		white-space: nowrap;
+		transition:
+			transform 150ms ease,
+			border-color 150ms ease,
+			background 150ms ease,
+			color 150ms ease;
 	}
 
-	.primary {
-		border-color: #183b56;
-		background: #183b56;
-		color: #ffffff;
+	button:hover,
+	.back-link:hover {
+		border-color: var(--tertiary);
+		background: var(--surface-bright);
+		color: var(--tertiary);
 	}
 
-	.ghost {
-		background: transparent;
+	button:active,
+	.back-link:active {
+		transform: translateY(2px);
 	}
 
 	.danger {
-		border-color: #fecaca;
-		color: #b42318;
-	}
-
-	.full {
-		width: 100%;
+		border-color: rgba(255, 180, 171, 0.5);
+		color: var(--error);
 	}
 
 	.notice {
+		margin: 14px 24px 0;
 		padding: 11px 13px;
-		border: 1px solid #bbf7d0;
-		border-radius: 8px;
-		background: #f0fdf4;
-		color: #166534;
+		border: 1px solid rgba(171, 214, 0, 0.55);
+		border-radius: 2px;
+		background: rgba(21, 29, 0, 0.92);
+		color: var(--tertiary);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.8rem;
 		font-weight: 700;
 	}
 
 	.error-state {
-		border-color: #fecaca;
-		background: #fff1f2;
-		color: #b42318;
+		border-color: rgba(255, 180, 171, 0.65);
+		background: rgba(72, 0, 5, 0.72);
+		color: var(--error);
+	}
+
+	.board-shell {
+		flex: 1;
+		min-height: 0;
+		padding: 24px;
+		overflow-x: auto;
+		overflow-y: hidden;
 	}
 
 	.columns {
 		display: flex;
-		align-items: flex-start;
-		gap: 16px;
-		min-height: 0;
-		overflow-x: auto;
-		overflow-y: hidden;
+		align-items: stretch;
+		gap: 24px;
+		height: 100%;
+		min-width: max-content;
 		padding-bottom: 16px;
 	}
 
 	.column {
-		display: grid;
-		flex: 0 0 min(360px, calc(100vw - 40px));
-		grid-template-rows: auto auto 1fr;
-		gap: 12px;
+		display: flex;
+		flex-direction: column;
+		flex: 0 0 320px;
 		max-height: 100%;
-		padding: 12px;
-		border: 1px solid rgba(31, 41, 51, 0.12);
-		border-radius: 8px;
-		box-shadow: 0 14px 32px rgba(31, 41, 51, 0.08);
+		border: 1px solid var(--outline-variant);
+		border-radius: 4px;
+		background: var(--surface-container);
+		box-shadow:
+			inset 0 0 4px rgba(0, 0, 0, 0.5),
+			inset 0 1px 2px rgba(0, 0, 0, 0.8);
+		overflow: hidden;
 	}
 
 	.column-header {
-		align-items: start;
+		align-items: center;
 		justify-content: space-between;
+		gap: 12px;
+		padding: 14px;
+		border-bottom: 1px solid var(--outline-variant);
+		background: var(--surface-container-low);
 	}
 
-	.column-header form:first-child {
-		flex: 1;
+	.column-heading {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		min-width: 0;
 	}
 
-	.column-header input[name='title'] {
-		flex: 1;
-		font-weight: 750;
+	.column-heading div {
+		min-width: 0;
 	}
 
-	.new-card {
-		display: grid;
+	.column-heading h2 {
+		max-width: 172px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.column-heading p {
+		margin-top: 3px;
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.66rem;
+		text-transform: uppercase;
+	}
+
+	.column-meta {
+		display: flex;
+		align-items: center;
 		gap: 8px;
-		padding: 10px;
-		border: 1px dashed rgba(31, 41, 51, 0.22);
-		border-radius: 8px;
-		background: rgba(255, 255, 255, 0.45);
 	}
 
-	.new-card div,
-	.card-actions {
-		justify-content: space-between;
+	.column-meta > span {
+		min-width: 30px;
+		padding: 3px 8px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 2px;
+		background: var(--surface-container-lowest);
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.72rem;
+		text-align: center;
+	}
+
+	.status-dot {
+		flex: 0 0 auto;
+		width: 8px;
+		height: 8px;
+		border-radius: 999px;
+		background: var(--column-color);
+		box-shadow: 0 0 8px color-mix(in srgb, var(--column-color) 60%, transparent);
+	}
+
+	.column-header button {
+		min-height: 30px;
+		padding: 4px 8px;
+		font-weight: 750;
 	}
 
 	.cards {
 		display: grid;
 		align-content: start;
 		gap: 10px;
+		flex: 1;
 		min-height: 96px;
 		overflow-y: auto;
-		padding: 2px 2px 12px;
+		padding: 12px;
 	}
 
 	.card {
 		display: grid;
+		position: relative;
 		gap: 10px;
-		padding: 10px;
-		border: 1px solid rgba(31, 41, 51, 0.12);
-		border-radius: 8px;
-		box-shadow: 0 8px 18px rgba(31, 41, 51, 0.08);
+		padding: 12px;
+		border: 1px solid color-mix(in srgb, var(--card-color) 78%, var(--outline-variant));
+		border-radius: 2px;
+		background: var(--surface);
+		box-shadow:
+			0 0 8px color-mix(in srgb, var(--card-color) 35%, transparent),
+			inset 0 1px 0 rgba(255, 255, 255, 0.05);
+		overflow: hidden;
+		transition: transform 150ms ease;
+	}
+
+	.card:hover {
+		transform: translateY(-2px);
+	}
+
+	.card-gloss {
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), transparent);
+		pointer-events: none;
+	}
+
+	.card-topline {
+		display: flex;
+		position: relative;
+		z-index: 1;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.tag {
+		padding: 3px 8px;
+		border: 1px solid color-mix(in srgb, var(--card-color) 70%, transparent);
+		background: color-mix(in srgb, var(--card-color) 16%, transparent);
+		color: var(--card-color);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.68rem;
+		text-transform: uppercase;
+	}
+
+	.card-id {
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.68rem;
 	}
 
 	.card img {
@@ -690,20 +944,29 @@
 		width: 100%;
 		height: auto;
 		max-height: 320px;
-		border-radius: 7px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 2px;
 		object-fit: contain;
-		background: #111827;
+		background: #060606;
 	}
 
 	.copy-button {
 		justify-self: start;
-		border-color: #99f6e4;
-		color: #0f766e;
+		border-color: color-mix(in srgb, var(--card-color) 60%, transparent);
+		color: var(--card-color);
 	}
 
-	.card form {
-		display: grid;
-		gap: 8px;
+	.card-actions {
+		position: relative;
+		z-index: 1;
+		justify-content: space-between;
+	}
+
+	.small-button,
+	.add-card-button {
+		min-height: 30px;
+		padding: 5px 9px;
+		font-size: 0.78rem;
 	}
 
 	.empty-board {
@@ -712,40 +975,88 @@
 		min-width: min(600px, calc(100vw - 40px));
 		min-height: 280px;
 		place-items: center;
-		border: 1px dashed #cbd5d1;
-		border-radius: 8px;
-		background: #ffffff;
+		border: 1px dashed var(--outline-variant);
+		border-radius: 4px;
+		background: var(--surface-container);
 		text-align: center;
 	}
 
 	.empty-board p {
 		margin-top: 6px;
-		color: #64748b;
+		color: var(--on-surface-variant);
+	}
+
+	.add-column-panel {
+		display: grid;
+		flex: 0 0 56px;
+		height: 100%;
+		place-items: center;
+		border: 1px dashed var(--outline-variant);
+		border-radius: 4px;
+		background: rgba(14, 14, 14, 0.72);
+		color: var(--on-surface-variant);
+		transition:
+			transform 150ms ease,
+			border-color 150ms ease,
+			background 150ms ease;
+	}
+
+	.add-column-panel:hover {
+		border-color: var(--tertiary);
+		background: var(--surface);
+		color: var(--tertiary);
+	}
+
+	.add-column-panel span {
+		font-size: 1.5rem;
+		font-weight: 800;
+	}
+
+	@keyframes pulse {
+		50% {
+			opacity: 0;
+		}
 	}
 
 	@media (max-width: 780px) {
 		.board-page {
-			padding: 14px;
 			overflow: visible;
 		}
 
 		.topbar,
-		.create-column,
 		.top-actions,
-		.create-column form {
+		.brand-lockup {
 			align-items: stretch;
 			flex-direction: column;
+		}
+
+		.topbar {
+			padding: 12px 16px;
+		}
+
+		h1 {
+			max-width: none;
+		}
+
+		.search-box {
+			width: 100%;
 		}
 
 		.top-actions {
 			width: 100%;
 		}
 
-		.create-column input:not([type='color']),
-		.create-column button,
 		.top-actions button,
 		select {
 			width: 100%;
+		}
+
+		.board-shell {
+			padding: 16px;
+		}
+
+		.column {
+			flex-basis: min(320px, calc(100vw - 32px));
 		}
 	}
 </style>

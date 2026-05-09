@@ -30,6 +30,10 @@ Thumbs.db
 # Local Cloudflare deployment config
 /wrangler.local.jsonc
 
+# Local agent skill installs
+/.agents
+/skills-lock.json
+
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
