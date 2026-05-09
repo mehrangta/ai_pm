@@ -365,6 +365,49 @@
 		return true;
 	}
 
+	async function copyTextWithTauri(text: string) {
+		const [{ isTauri }, { writeText }] = await Promise.all([
+			import('@tauri-apps/api/core'),
+			import('@tauri-apps/plugin-clipboard-manager')
+		]);
+
+		if (!isTauri()) {
+			return false;
+		}
+
+		await writeText(text);
+
+		return true;
+	}
+
+	async function copyTextWithBrowserClipboard(text: string) {
+		if (!navigator.clipboard?.writeText) {
+			return false;
+		}
+
+		await navigator.clipboard.writeText(text);
+
+		return true;
+	}
+
+	async function copyCardText(card: BoardCard) {
+		copyMessage = '';
+
+		try {
+			if (
+				(await copyTextWithTauri(card.description)) ||
+				(await copyTextWithBrowserClipboard(card.description))
+			) {
+				copyMessage = 'Card text copied.';
+				return;
+			}
+		} catch {
+			// Fall through to the user-facing unsupported message.
+		}
+
+		copyMessage = 'Text clipboard copy is not available in this environment.';
+	}
+
 	async function copyImage(card: BoardCard) {
 		copyMessage = '';
 
@@ -494,7 +537,18 @@
 								<div class="card-gloss" aria-hidden="true"></div>
 								<div class="card-topline">
 									<span class="tag">{cardKind(card)}</span>
-									<span class="card-id">#{shortId(card.id)}</span>
+									<span class="card-tools">
+										<span class="card-id">#{shortId(card.id)}</span>
+										<button
+											type="button"
+											class="copy-text-button"
+											onclick={() => copyCardText(card)}
+											aria-label="Copy card text"
+											title="Copy card text"
+										>
+											<span class="copy-icon" aria-hidden="true"></span>
+										</button>
+									</span>
 								</div>
 								<h3>{card.description}</h3>
 
@@ -937,6 +991,50 @@
 		color: var(--on-surface-variant);
 		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 		font-size: 0.68rem;
+	}
+
+	.card-tools {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+	}
+
+	.copy-text-button {
+		display: inline-grid;
+		width: 28px;
+		min-width: 28px;
+		min-height: 28px;
+		place-items: center;
+		padding: 0;
+		border-color: color-mix(in srgb, var(--card-color) 45%, var(--outline-variant));
+		background: color-mix(in srgb, var(--card-color) 8%, var(--surface-container-lowest));
+	}
+
+	.copy-icon {
+		position: relative;
+		width: 13px;
+		height: 13px;
+	}
+
+	.copy-icon::before,
+	.copy-icon::after {
+		position: absolute;
+		width: 8px;
+		height: 8px;
+		border: 1px solid currentColor;
+		content: "";
+	}
+
+	.copy-icon::before {
+		top: 0;
+		left: 0;
+		opacity: 0.65;
+	}
+
+	.copy-icon::after {
+		right: 0;
+		bottom: 0;
+		background: var(--surface);
 	}
 
 	.card img {
