@@ -1,2 +1,12 @@
-<h1>Welcome to SvelteKit</h1>
-<p>Visit <a href="https://svelte.dev/docs/kit">svelte.dev/docs/kit</a> to read the documentation</p>
+<main class="redirecting">
+	<p>Redirecting...</p>
+</main>
+
+<style>
+	.redirecting {
+		display: grid;
+		min-height: 100vh;
+		place-items: center;
+		color: #64748b;
+	}
+</style>
