@@ -9,7 +9,6 @@
 - Database schema: `src/lib/server/db/schema.ts`; generated auth tables live in `src/lib/server/db/auth.schema.ts`.
 - Migrations: generated under `drizzle/` with `bun run db:generate`.
 - Tauri window behavior is configured in `src-tauri/tauri.conf.json` and reinforced in `src-tauri/src/lib.rs`.
-- Android target: Tauri mobile can generate `src-tauri/gen/android`; local APK builds require JDK 17, Android SDK/NDK, Rust Android targets, and Windows Developer Mode or symlink privilege.
 
 ## Workflow
 
@@ -35,7 +34,6 @@
 - Run `bun run build` for route, adapter, schema, or deployment-related changes.
 - Run `cargo check` from `src-tauri/` for Rust/Tauri source changes.
 - Run `bun tauri build --no-bundle` to produce a local desktop executable at `src-tauri/target/release/app.exe`; prefer this over starting a dev server.
-- For Android/Tauri mobile changes, run `bun tauri android build --apk` when the local Android toolchain and Windows symlink permission are available.
 - If `wrangler types --check` reports stale types, run `bun run gen`.
 - If generated `.svelte-kit` output causes type noise, remove ignored `.svelte-kit/`, run `bun run gen`, and rerun checks.
 - If `cargo` is installed but not on PATH in PowerShell, prepend `$env:USERPROFILE\.cargo\bin` for that shell.
