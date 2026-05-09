@@ -1,3 +1,4 @@
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -12,10 +13,13 @@ pub fn run() {
                         .build(),
                 )?;
             }
-            if let Some(window) = app.get_webview_window("main") {
-                window.set_fullscreen(false)?;
-                window.set_decorations(true)?;
-                window.maximize()?;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.set_fullscreen(false)?;
+                    window.set_decorations(true)?;
+                    window.maximize()?;
+                }
             }
             Ok(())
         })
