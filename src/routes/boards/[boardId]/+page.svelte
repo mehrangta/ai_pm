@@ -93,6 +93,10 @@
 		]);
 	}
 
+	function isPendingCard(card: BoardCard) {
+		return card.id.startsWith('pending-');
+	}
+
 	function handleCardConsider(columnId: string, event: CustomEvent<{ items: BoardCard[] }>) {
 		columns = columns.map((column) =>
 			column.id === columnId
@@ -109,7 +113,9 @@
 		persistOrder('moveCards', {
 			columns: columns.map((column) => ({
 				id: column.id,
-				cardIds: column.cards.filter((card) => !isShadowCard(card)).map((card) => card.id)
+				cardIds: column.cards
+					.filter((card) => !isShadowCard(card) && !isPendingCard(card))
+					.map((card) => card.id)
 			}))
 		});
 	}
@@ -193,6 +199,11 @@
 	}
 
 	async function updateCardFromPrompt(card: BoardCard) {
+		if (isPendingCard(card)) {
+			copyMessage = 'Image upload is still finishing.';
+			return;
+		}
+
 		const description = window.prompt('Card description', card.description)?.trim();
 
 		if (!description || description === card.description) return;
@@ -201,6 +212,11 @@
 	}
 
 	async function deleteCardWithConfirm(card: BoardCard) {
+		if (isPendingCard(card)) {
+			copyMessage = 'Image upload is still finishing.';
+			return;
+		}
+
 		if (!window.confirm('Delete this card?')) return;
 
 		await postAction('deleteCard', { cardId: card.id });
@@ -528,6 +544,11 @@
 	async function copyCardText(card: BoardCard) {
 		copyMessage = '';
 
+		if (isPendingCard(card)) {
+			copyMessage = 'Image upload is still finishing.';
+			return;
+		}
+
 		try {
 			if (
 				(await copyTextWithTauri(card.description)) ||
@@ -547,6 +568,11 @@
 		copyMessage = '';
 
 		if (!card.image) return;
+
+		if (isPendingCard(card)) {
+			copyMessage = 'Image upload is still finishing.';
+			return;
+		}
 
 		try {
 			if (await copyImageWithBrowserClipboard(card)) {
@@ -578,6 +604,7 @@
 	}
 
 	function cardKind(card: BoardCard) {
+		if (isPendingCard(card)) return 'Uploading';
 		return card.image ? 'Image' : 'Card';
 	}
 
@@ -687,6 +714,7 @@
 											type="button"
 											class="copy-text-button"
 											onclick={() => copyCardText(card)}
+											disabled={isPendingCard(card)}
 											aria-label="Copy card text"
 											title="Copy card text"
 										>
@@ -703,16 +731,31 @@
 										width={card.image.width}
 										height={card.image.height}
 									/>
-									<button class="copy-button" type="button" onclick={() => copyImage(card)}>
+									<button
+										class="copy-button"
+										type="button"
+										onclick={() => copyImage(card)}
+										disabled={isPendingCard(card)}
+									>
 										Copy image
 									</button>
 								{/if}
 
 								<div class="card-actions">
-									<button type="button" class="small-button" onclick={() => updateCardFromPrompt(card)}>
+									<button
+										type="button"
+										class="small-button"
+										onclick={() => updateCardFromPrompt(card)}
+										disabled={isPendingCard(card)}
+									>
 										Edit
 									</button>
-									<button type="button" class="small-button danger" onclick={() => deleteCardWithConfirm(card)}>
+									<button
+										type="button"
+										class="small-button danger"
+										onclick={() => deleteCardWithConfirm(card)}
+										disabled={isPendingCard(card)}
+									>
 										Delete
 									</button>
 								</div>
