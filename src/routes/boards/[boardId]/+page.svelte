@@ -26,6 +26,12 @@
 		pending: Record<string, unknown> | null;
 	};
 
+	type CreateImageCardResponse = {
+		ok: true;
+		cardId: string;
+		position: number;
+	};
+
 	const flipDurationMs = 160;
 	const maxImageBytes = 1_500_000;
 	const orderSaveState: Record<OrderAction, OrderSaveState> = {
@@ -213,6 +219,26 @@
 		copyMessage = '';
 	}
 
+	function addCardToColumn(columnId: string, card: BoardCard) {
+		columns = columns.map((column) =>
+			column.id === columnId ? { ...column, cards: [...column.cards, card] } : column
+		);
+	}
+
+	function replaceCard(cardId: string, nextCard: BoardCard) {
+		columns = columns.map((column) => ({
+			...column,
+			cards: column.cards.map((card) => (card.id === cardId ? nextCard : card))
+		}));
+	}
+
+	function removeCard(cardId: string) {
+		columns = columns.map((column) => ({
+			...column,
+			cards: column.cards.filter((card) => card.id !== cardId)
+		}));
+	}
+
 	async function handlePaste(event: ClipboardEvent) {
 		const item = Array.from(event.clipboardData?.items ?? []).find((entry) =>
 			entry.type.startsWith('image/')
@@ -223,7 +249,10 @@
 		event.preventDefault();
 		resetTransientMessages();
 
-		if (!selectedColumnId) {
+		const columnId = selectedColumnId;
+		const column = columns.find((entry) => entry.id === columnId);
+
+		if (!columnId || !column) {
 			pasteError = 'Create a column before pasting an image.';
 			return;
 		}
@@ -235,17 +264,49 @@
 			return;
 		}
 
+		const previewUrl = URL.createObjectURL(file);
+		const pendingCard: BoardCard = {
+			id: `pending-${crypto.randomUUID()}`,
+			columnId,
+			description: 'Pasted image',
+			color: '#ffffff',
+			position: column.cards.length,
+			image: {
+				dataUrl: previewUrl,
+				mimeType: file.type || 'image/png',
+				byteSize: file.size,
+				width: 1,
+				height: 1
+			}
+		};
+
+		addCardToColumn(columnId, pendingCard);
+		copyMessage = 'Image uploading...';
+
+		let image: NonNullable<BoardCard['image']>;
+
 		try {
-			const image = await compressImage(file);
+			image = await compressImage(file);
 
 			if (image.dataUrl.length > maxImageBytes) {
+				removeCard(pendingCard.id);
+				URL.revokeObjectURL(previewUrl);
+				copyMessage = '';
 				pasteError = 'Compressed image is still over 1.5 MB.';
 				return;
 			}
+		} catch {
+			removeCard(pendingCard.id);
+			URL.revokeObjectURL(previewUrl);
+			copyMessage = '';
+			pasteError = 'The pasted image could not be compressed.';
+			return;
+		}
 
-			await boardAction(currentBoardId(), {
+		try {
+			const savedCard = await boardAction<CreateImageCardResponse>(currentBoardId(), {
 				action: 'createImageCard',
-				columnId: selectedColumnId,
+				columnId,
 				description: 'Pasted image',
 				color: '#ffffff',
 				dataUrl: image.dataUrl,
@@ -254,17 +315,43 @@
 				width: image.width,
 				height: image.height
 			});
-			await loadBoard();
+
+			replaceCard(pendingCard.id, {
+				...pendingCard,
+				id: savedCard.cardId,
+				position: savedCard.position,
+				image
+			});
+			copyMessage = 'Image uploaded.';
 		} catch {
-			pasteError = 'The pasted image could not be compressed.';
+			removeCard(pendingCard.id);
+			copyMessage = '';
+			pasteError = 'The pasted image could not be uploaded.';
+		} finally {
+			URL.revokeObjectURL(previewUrl);
 		}
 	}
 
 	async function compressImage(file: File) {
-		const bitmap = await createImageBitmap(file);
-		const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
-		const width = Math.max(1, Math.round(bitmap.width * scale));
-		const height = Math.max(1, Math.round(bitmap.height * scale));
+		const sourceBitmap = await createImageBitmap(file);
+		const scale = Math.min(1, 1600 / Math.max(sourceBitmap.width, sourceBitmap.height));
+		const width = Math.max(1, Math.round(sourceBitmap.width * scale));
+		const height = Math.max(1, Math.round(sourceBitmap.height * scale));
+		let bitmap = sourceBitmap;
+
+		if (scale < 1) {
+			try {
+				bitmap = await createImageBitmap(sourceBitmap, {
+					resizeWidth: width,
+					resizeHeight: height,
+					resizeQuality: 'medium'
+				});
+				sourceBitmap.close();
+			} catch {
+				bitmap = sourceBitmap;
+			}
+		}
+
 		const canvas = document.createElement('canvas');
 		canvas.width = width;
 		canvas.height = height;
@@ -275,6 +362,8 @@
 		}
 
 		context.drawImage(bitmap, 0, 0, width, height);
+		bitmap.close();
+
 		const blob =
 			(await canvasToBlob(canvas, 'image/webp', 0.82)) ??
 			(await canvasToBlob(canvas, 'image/jpeg', 0.82));

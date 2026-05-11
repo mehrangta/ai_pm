@@ -288,7 +288,7 @@ export const POST: RequestHandler = async (event) => {
 				height
 			});
 
-			return apiJson(event, { ok: true }, { status: 201 });
+			return apiJson(event, { ok: true, cardId: card.id, position: cards.length }, { status: 201 });
 		}
 
 		const cards = await db.select({ id: kanbanCard.id }).from(kanbanCard).where(eq(kanbanCard.columnId, columnId));
