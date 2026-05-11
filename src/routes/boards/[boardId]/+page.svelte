@@ -199,14 +199,15 @@
 	}
 
 	async function updateCardFromPrompt(card: BoardCard) {
-		if (isPendingCard(card)) {
-			copyMessage = 'Image upload is still finishing.';
-			return;
-		}
-
 		const description = window.prompt('Card description', card.description)?.trim();
 
 		if (!description || description === card.description) return;
+
+		if (isPendingCard(card)) {
+			updateLocalCardDescription(card.id, description);
+			copyMessage = 'Card text updated. Image upload is still finishing.';
+			return;
+		}
 
 		await postAction('updateCard', { cardId: card.id, description, color: card.color });
 	}
@@ -252,6 +253,20 @@
 		columns = columns.map((column) => ({
 			...column,
 			cards: column.cards.filter((card) => card.id !== cardId)
+		}));
+	}
+
+	function cardDescription(cardId: string, fallback: string) {
+		return (
+			columns.flatMap((column) => column.cards).find((card) => card.id === cardId)?.description ??
+			fallback
+		);
+	}
+
+	function updateLocalCardDescription(cardId: string, description: string) {
+		columns = columns.map((column) => ({
+			...column,
+			cards: column.cards.map((card) => (card.id === cardId ? { ...card, description } : card))
 		}));
 	}
 
@@ -319,11 +334,14 @@
 			return;
 		}
 
+		const uploadedDescription = cardDescription(pendingCard.id, pendingCard.description);
+		let savedCard: CreateImageCardResponse;
+
 		try {
-			const savedCard = await boardAction<CreateImageCardResponse>(currentBoardId(), {
+			savedCard = await boardAction<CreateImageCardResponse>(currentBoardId(), {
 				action: 'createImageCard',
 				columnId,
-				description: 'Pasted image',
+				description: uploadedDescription,
 				color: '#ffffff',
 				dataUrl: image.dataUrl,
 				mimeType: image.mimeType,
@@ -331,18 +349,37 @@
 				width: image.width,
 				height: image.height
 			});
-
-			replaceCard(pendingCard.id, {
-				...pendingCard,
-				id: savedCard.cardId,
-				position: savedCard.position,
-				image
-			});
-			copyMessage = 'Image uploaded.';
 		} catch {
 			removeCard(pendingCard.id);
 			copyMessage = '';
 			pasteError = 'The pasted image could not be uploaded.';
+			URL.revokeObjectURL(previewUrl);
+			return;
+		}
+
+		const latestDescription = cardDescription(pendingCard.id, uploadedDescription);
+
+		replaceCard(pendingCard.id, {
+			...pendingCard,
+			id: savedCard.cardId,
+			description: latestDescription,
+			position: savedCard.position,
+			image
+		});
+
+		try {
+			if (latestDescription !== uploadedDescription) {
+				await boardAction(currentBoardId(), {
+					action: 'updateCard',
+					cardId: savedCard.cardId,
+					description: latestDescription,
+					color: pendingCard.color
+				});
+			}
+
+			copyMessage = 'Image uploaded.';
+		} catch {
+			copyMessage = 'Image uploaded, but text sync failed.';
 		} finally {
 			URL.revokeObjectURL(previewUrl);
 		}
@@ -746,7 +783,6 @@
 										type="button"
 										class="small-button"
 										onclick={() => updateCardFromPrompt(card)}
-										disabled={isPendingCard(card)}
 									>
 										Edit
 									</button>
