@@ -307,9 +307,20 @@
 		});
 	}
 
-	async function dataUrlToRgba(dataUrl: string) {
+	function dataUrlMimeType(dataUrl: string) {
+		return /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? '';
+	}
+
+	async function dataUrlToBlob(dataUrl: string, fallbackMimeType = '') {
 		const response = await fetch(dataUrl);
 		const blob = await response.blob();
+		return blob.type || !fallbackMimeType
+			? blob
+			: new Blob([await blob.arrayBuffer()], { type: fallbackMimeType });
+	}
+
+	async function dataUrlToCanvas(dataUrl: string) {
+		const blob = await dataUrlToBlob(dataUrl);
 		const bitmap = await createImageBitmap(blob);
 		const canvas = document.createElement('canvas');
 		canvas.width = bitmap.width;
@@ -321,12 +332,32 @@
 		}
 
 		context.drawImage(bitmap, 0, 0);
-		const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height);
+		const width = bitmap.width;
+		const height = bitmap.height;
+		bitmap.close();
+
+		return { canvas, context, width, height };
+	}
+
+	async function dataUrlToPngBlob(dataUrl: string) {
+		const { canvas } = await dataUrlToCanvas(dataUrl);
+		const blob = await canvasToBlob(canvas, 'image/png', 1);
+
+		if (!blob) {
+			throw new Error('PNG encoding failed');
+		}
+
+		return blob;
+	}
+
+	async function dataUrlToRgba(dataUrl: string) {
+		const { context, width, height } = await dataUrlToCanvas(dataUrl);
+		const pixels = context.getImageData(0, 0, width, height);
 
 		return {
 			rgba: new Uint8Array(pixels.data),
-			width: bitmap.width,
-			height: bitmap.height
+			width,
+			height
 		};
 	}
 
@@ -354,13 +385,28 @@
 	}
 
 	async function copyImageWithBrowserClipboard(card: BoardCard) {
-		if (!('ClipboardItem' in window) || !navigator.clipboard?.write) {
+		if (!('ClipboardItem' in window) || !navigator.clipboard?.write || !card.image) {
 			return false;
 		}
 
-		const response = await fetch(card.image!.dataUrl);
-		const blob = await response.blob();
-		await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+		const item = window.ClipboardItem;
+		const mimeType = card.image.mimeType || dataUrlMimeType(card.image.dataUrl) || 'image/png';
+		const supports = (type: string) => !item.supports || item.supports(type);
+
+		if (supports(mimeType)) {
+			await navigator.clipboard.write([
+				new item({ [mimeType]: dataUrlToBlob(card.image.dataUrl, mimeType) })
+			]);
+			return true;
+		}
+
+		if (!supports('image/png')) {
+			return false;
+		}
+
+		await navigator.clipboard.write([
+			new item({ 'image/png': dataUrlToPngBlob(card.image.dataUrl) })
+		]);
 
 		return true;
 	}
@@ -414,7 +460,16 @@
 		if (!card.image) return;
 
 		try {
-			if ((await copyImageWithTauri(card)) || (await copyImageWithBrowserClipboard(card))) {
+			if (await copyImageWithBrowserClipboard(card)) {
+				copyMessage = 'Image copied.';
+				return;
+			}
+		} catch {
+			// Fall through to the Tauri fallback.
+		}
+
+		try {
+			if (await copyImageWithTauri(card)) {
 				copyMessage = 'Image copied.';
 				return;
 			}
