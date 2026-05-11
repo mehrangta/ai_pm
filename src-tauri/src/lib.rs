@@ -1,6 +1,26 @@
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::Manager;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn apply_main_window_defaults(app: &tauri::App) {
+    let Some(window) = app.get_webview_window("main") else {
+        log::warn!("main window not found during setup");
+        return;
+    };
+
+    if let Err(error) = window.set_fullscreen(false) {
+        log::warn!("failed to disable fullscreen during setup: {error}");
+    }
+
+    if let Err(error) = window.set_decorations(true) {
+        log::warn!("failed to enable window decorations during setup: {error}");
+    }
+
+    if let Err(error) = window.maximize() {
+        log::warn!("failed to maximize main window during setup: {error}");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -15,11 +35,7 @@ pub fn run() {
             }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
-                if let Some(window) = app.get_webview_window("main") {
-                    window.set_fullscreen(false)?;
-                    window.set_decorations(true)?;
-                    window.maximize()?;
-                }
+                apply_main_window_defaults(app);
             }
             Ok(())
         })
