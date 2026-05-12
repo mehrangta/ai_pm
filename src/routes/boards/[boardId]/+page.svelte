@@ -98,6 +98,8 @@
 	}
 
 	function handleCardConsider(columnId: string, event: CustomEvent<{ items: BoardCard[] }>) {
+		if (isSearchActive()) return;
+
 		columns = columns.map((column) =>
 			column.id === columnId
 				? {
@@ -109,6 +111,8 @@
 	}
 
 	function handleCardFinalize(columnId: string, event: CustomEvent<{ items: BoardCard[] }>) {
+		if (isSearchActive()) return;
+
 		handleCardConsider(columnId, event);
 		persistOrder('moveCards', {
 			columns: columns.map((column) => ({
@@ -654,6 +658,14 @@
 			shortId(card.id).toLowerCase().includes(value)
 		);
 	}
+
+	function isSearchActive() {
+		return query.trim().length > 0;
+	}
+
+	function visibleCards(column: BoardColumn) {
+		return isSearchActive() ? column.cards.filter(matchesQuery) : column.cards;
+	}
 </script>
 
 <svelte:window onpaste={handlePaste} />
@@ -697,6 +709,7 @@
 	{/if}
 
 	<div class="board-shell">
+		<div class="board-track">
 		<section
 			class="columns"
 			aria-label="Kanban columns"
@@ -715,12 +728,12 @@
 							<span class="status-dot" aria-hidden="true"></span>
 							<div>
 								<h2>{column.title}</h2>
-								<p>{column.cards.filter(matchesQuery).length} cards</p>
+								<p>{visibleCards(column).length} cards</p>
 							</div>
 						</div>
 
 						<div class="column-meta">
-							<span>{column.cards.filter(matchesQuery).length}</span>
+							<span>{visibleCards(column).length}</span>
 							<button type="button" class="small-button" onclick={() => updateColumnFromPrompt(column)}>Edit</button>
 							<button type="button" class="small-button danger" onclick={() => deleteColumnWithConfirm(column)}>
 								Delete
@@ -730,13 +743,18 @@
 
 					<div
 						class="cards"
-						use:dndzone={{ items: column.cards, flipDurationMs, type: 'cards' }}
+						use:dndzone={{
+							items: visibleCards(column),
+							flipDurationMs,
+							type: 'cards',
+							dragDisabled: isSearchActive()
+						}}
 						onconsider={(event: CustomEvent<{ items: BoardCard[] }>) =>
 							handleCardConsider(column.id, event)}
 						onfinalize={(event: CustomEvent<{ items: BoardCard[] }>) =>
 							handleCardFinalize(column.id, event)}
 					>
-						{#each column.cards.filter(matchesQuery) as card (card.id)}
+						{#each visibleCards(column) as card (card.id)}
 							<article
 								class="card"
 								style:--card-color={safeColor(card.color, '#8b5cf6')}
@@ -809,41 +827,35 @@
 					<p>Cards and pasted images need a column destination.</p>
 				</div>
 			{/each}
-
-			<button type="button" class="add-column-panel" onclick={createColumnFromPrompt} aria-label="Add column">
-				<span>+</span>
-			</button>
 		</section>
+
+		<button type="button" class="add-column-panel" onclick={createColumnFromPrompt} aria-label="Add column">
+			<span>+</span>
+		</button>
+		</div>
 	</div>
 </main>
 
 <style>
 	.board-page {
-		--surface-container-lowest: #0e0e0e;
-		--surface: #141313;
-		--surface-container: #201f20;
-		--surface-container-low: #1c1b1c;
-		--surface-container-high: #2b2a2a;
-		--surface-container-highest: #353435;
-		--surface-bright: #3a3939;
-		--on-surface: #e5e2e1;
-		--on-surface-variant: #c8c5cb;
-		--outline: #919095;
-		--outline-variant: #47464b;
-		--tertiary: #abd600;
+		--surface-container-lowest: #101113;
+		--surface: #17181b;
+		--surface-container: #202226;
+		--surface-container-low: #1b1d21;
+		--surface-container-high: #2a2d33;
+		--surface-container-highest: #343841;
+		--surface-bright: #30343c;
+		--on-surface: #f3f4f6;
+		--on-surface-variant: #b9c0ca;
+		--outline: #8c96a6;
+		--outline-variant: #3c424c;
+		--tertiary: #9bd400;
 		--accent-violet: #8b5cf6;
 		--error: #ffb4ab;
 		display: flex;
 		flex-direction: column;
 		min-height: 100vh;
-		background:
-			linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%),
-			linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06)),
-			var(--surface-container-lowest);
-		background-size:
-			100% 2px,
-			3px 100%,
-			auto;
+		background: linear-gradient(180deg, #15171b 0%, var(--surface-container-lowest) 100%);
 		color: var(--on-surface);
 		overflow: hidden;
 		font-family:
@@ -856,12 +868,10 @@
 		justify-content: space-between;
 		gap: 16px;
 		min-height: 64px;
-		padding: 10px 24px;
+		padding: 12px 24px;
 		border-bottom: 1px solid var(--outline-variant);
 		background: var(--surface-container);
-		box-shadow:
-			inset 0 -1px 0 rgba(255, 255, 255, 0.05),
-			0 8px 24px rgba(0, 0, 0, 0.28);
+		box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
 		z-index: 10;
 	}
 
@@ -875,7 +885,7 @@
 	.back-link {
 		min-height: 38px;
 		border: 1px solid var(--outline-variant);
-		border-radius: 2px;
+		border-radius: 6px;
 		padding: 9px 12px;
 		background: var(--surface-container-low);
 		color: var(--on-surface);
@@ -916,9 +926,9 @@
 		position: relative;
 		z-index: 1;
 		color: var(--on-surface);
-		font-size: 0.98rem;
-		font-weight: 650;
-		line-height: 1.35;
+		font-size: 0.92rem;
+		font-weight: 620;
+		line-height: 1.38;
 		overflow-wrap: anywhere;
 		white-space: pre-wrap;
 	}
@@ -939,11 +949,9 @@
 		min-width: 220px;
 		padding: 7px 10px;
 		border: 1px solid var(--outline-variant);
-		border-radius: 2px;
+		border-radius: 6px;
 		background: var(--surface-container-lowest);
-		box-shadow:
-			inset 0 0 4px rgba(0, 0, 0, 0.5),
-			inset 0 1px 2px rgba(0, 0, 0, 0.8);
+		box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
 		color: var(--on-surface-variant);
 	}
 
@@ -991,7 +999,7 @@
 	select {
 		min-width: 0;
 		border: 1px solid var(--outline-variant);
-		border-radius: 2px;
+		border-radius: 6px;
 		padding: 9px 10px;
 		background: var(--surface-container-lowest);
 		color: var(--on-surface);
@@ -1008,7 +1016,7 @@
 	button {
 		min-height: 38px;
 		border: 1px solid var(--outline-variant);
-		border-radius: 2px;
+		border-radius: 6px;
 		padding: 8px 11px;
 		background: var(--surface-container-low);
 		color: var(--on-surface);
@@ -1039,10 +1047,10 @@
 	}
 
 	.notice {
-		margin: 14px 24px 0;
+		margin: 12px 18px 0;
 		padding: 11px 13px;
 		border: 1px solid rgba(171, 214, 0, 0.55);
-		border-radius: 2px;
+		border-radius: 6px;
 		background: rgba(21, 29, 0, 0.92);
 		color: var(--tertiary);
 		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -1059,31 +1067,37 @@
 	.board-shell {
 		flex: 1;
 		min-height: 0;
-		padding: 24px;
+		padding: 18px;
 		overflow-x: auto;
 		overflow-y: hidden;
 	}
 
-	.columns {
+	.board-track {
 		display: flex;
 		align-items: stretch;
-		gap: 24px;
+		gap: 16px;
 		height: 100%;
 		min-width: max-content;
 		padding-bottom: 16px;
 	}
 
+	.columns {
+		display: flex;
+		align-items: stretch;
+		gap: 16px;
+		height: 100%;
+		min-width: max-content;
+	}
+
 	.column {
 		display: flex;
 		flex-direction: column;
-		flex: 0 0 320px;
+		flex: 0 0 312px;
 		max-height: 100%;
 		border: 1px solid var(--outline-variant);
-		border-radius: 4px;
+		border-radius: 8px;
 		background: var(--surface-container);
-		box-shadow:
-			inset 0 0 4px rgba(0, 0, 0, 0.5),
-			inset 0 1px 2px rgba(0, 0, 0, 0.8);
+		box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
 		overflow: hidden;
 	}
 
@@ -1132,7 +1146,7 @@
 		min-width: 30px;
 		padding: 3px 8px;
 		border: 1px solid var(--outline-variant);
-		border-radius: 2px;
+		border-radius: 5px;
 		background: var(--surface-container-lowest);
 		color: var(--on-surface-variant);
 		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -1158,7 +1172,7 @@
 	.cards {
 		display: grid;
 		align-content: start;
-		gap: 10px;
+		gap: 12px;
 		flex: 1;
 		min-height: 96px;
 		overflow-y: auto;
@@ -1168,13 +1182,13 @@
 	.card {
 		display: grid;
 		position: relative;
-		gap: 10px;
+		gap: 9px;
 		padding: 12px;
 		border: 1px solid color-mix(in srgb, var(--card-color) 78%, var(--outline-variant));
-		border-radius: 2px;
+		border-radius: 7px;
 		background: var(--surface);
 		box-shadow:
-			0 0 8px color-mix(in srgb, var(--card-color) 35%, transparent),
+			0 0 0 1px rgba(255, 255, 255, 0.02),
 			inset 0 1px 0 rgba(255, 255, 255, 0.05);
 		overflow: hidden;
 		transition: transform 150ms ease;
@@ -1264,9 +1278,9 @@
 		display: block;
 		width: 100%;
 		height: auto;
-		max-height: 320px;
+		max-height: 190px;
 		border: 1px solid var(--outline-variant);
-		border-radius: 2px;
+		border-radius: 5px;
 		object-fit: contain;
 		background: #060606;
 	}
@@ -1275,6 +1289,8 @@
 		justify-self: start;
 		border-color: color-mix(in srgb, var(--card-color) 60%, transparent);
 		color: var(--card-color);
+		min-height: 34px;
+		padding: 6px 10px;
 	}
 
 	.card-actions {
@@ -1297,7 +1313,7 @@
 		min-height: 280px;
 		place-items: center;
 		border: 1px dashed var(--outline-variant);
-		border-radius: 4px;
+		border-radius: 8px;
 		background: var(--surface-container);
 		text-align: center;
 	}
@@ -1313,7 +1329,7 @@
 		height: 100%;
 		place-items: center;
 		border: 1px dashed var(--outline-variant);
-		border-radius: 4px;
+		border-radius: 8px;
 		background: rgba(14, 14, 14, 0.72);
 		color: var(--on-surface-variant);
 		transition:
