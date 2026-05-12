@@ -1,57 +1,48 @@
-<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Subtle Product Manager App Icon</title>
+  <desc id="desc">A minimal vector icon representing product management with a central roadmap card, prioritization lanes, and soft connected strategy nodes.</desc>
   <defs>
-    <radialGradient id="faceGrad" cx="38%" cy="30%" r="70%">
-      <stop offset="0%" stop-color="#fff176"/>
-      <stop offset="55%" stop-color="#ffd400"/>
-      <stop offset="100%" stop-color="#f0a800"/>
-    </radialGradient>
+    <linearGradient id="primary" x1="260" y1="240" x2="760" y2="780" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0F766E"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
 
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="10" stdDeviation="8" flood-color="#000" flood-opacity="0.25"/>
+    <linearGradient id="accent" x1="340" y1="330" x2="720" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14B8A6"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#0F172A" flood-opacity="0.10"/>
     </filter>
   </defs>
 
-  <circle cx="256" cy="256" r="220" fill="url(#faceGrad)" stroke="#050505" stroke-width="14" filter="url(#shadow)"/>
+  <circle cx="512" cy="512" r="300" fill="none" stroke="#0F766E" stroke-opacity="0.12" stroke-width="28"/>
+  <path d="M512 212A300 300 0 0 1 812 512" fill="none" stroke="url(#primary)" stroke-width="28" stroke-linecap="round" opacity="0.34"/>
+  <path d="M512 812A300 300 0 0 1 212 512" fill="none" stroke="url(#primary)" stroke-width="28" stroke-linecap="round" opacity="0.24"/>
 
-  <path d="M126 151 C163 86, 231 92, 270 151" fill="none" stroke="#050505" stroke-width="19" stroke-linecap="round"/>
-  <path d="M330 168 C357 205, 405 200, 430 176" fill="none" stroke="#050505" stroke-width="15" stroke-linecap="round"/>
+  <circle cx="512" cy="212" r="34" fill="#E6FFFB" stroke="#14B8A6" stroke-width="12"/>
+  <circle cx="812" cy="512" r="34" fill="#EFF6FF" stroke="#2563EB" stroke-width="12"/>
+  <circle cx="512" cy="812" r="34" fill="#F5F3FF" stroke="#7C3AED" stroke-width="12"/>
+  <circle cx="212" cy="512" r="34" fill="#FFF7ED" stroke="#F59E0B" stroke-width="12"/>
 
-  <ellipse cx="196" cy="214" rx="79" ry="91" fill="#fffbea" stroke="#050505" stroke-width="12"/>
-  <circle cx="196" cy="221" r="27" fill="#050505"/>
-  <circle cx="207" cy="211" r="8" fill="#ffffff"/>
+  <g filter="url(#softShadow)">
+    <rect x="304" y="314" width="416" height="396" rx="72" fill="#FFFFFF"/>
+    <rect x="304" y="314" width="416" height="396" rx="72" fill="url(#accent)" opacity="0.035"/>
+  </g>
 
-  <ellipse cx="348" cy="231" rx="63" ry="34" fill="#fffbea" stroke="#050505" stroke-width="11" transform="rotate(-4 348 231)"/>
-  <circle cx="348" cy="231" r="21" fill="#050505"/>
-  <circle cx="357" cy="222" r="7" fill="#ffffff"/>
+  <g stroke-linecap="round" stroke-width="24">
+    <path d="M392 420H604" stroke="#CBD5E1"/>
+    <path d="M392 512H560" stroke="#CBD5E1"/>
+    <path d="M392 604H640" stroke="#CBD5E1"/>
+  </g>
 
-  <path d="M119 247 C133 284, 167 304, 218 297" fill="none" stroke="#050505" stroke-width="6" stroke-linecap="round"/>
-  <path d="M146 284 C165 314, 206 325, 246 308" fill="none" stroke="#050505" stroke-width="5" stroke-linecap="round"/>
-  <path d="M310 277 C334 294, 374 294, 402 276" fill="none" stroke="#050505" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="360" cy="420" r="14" fill="#14B8A6"/>
+  <circle cx="360" cy="512" r="14" fill="#2563EB"/>
+  <circle cx="360" cy="604" r="14" fill="#F59E0B"/>
 
-  <path d="M82 287
-           C138 425, 352 459, 433 292
-           C360 354, 159 358, 82 287Z"
-        fill="#050505"/>
+  <circle cx="642" cy="512" r="66" fill="url(#primary)"/>
+  <path d="M610 512L633 535L681 486" fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <path d="M111 307
-           C166 391, 337 416, 405 310
-           C336 354, 177 355, 111 307Z"
-        fill="#fff7d1"/>
-
-  <path d="M94 286 C165 359, 347 366, 426 288" fill="none" stroke="#050505" stroke-width="13" stroke-linecap="round"/>
-  <path d="M130 364 C196 437, 329 441, 390 363" fill="none" stroke="#050505" stroke-width="10" stroke-linecap="round"/>
-
-  <path d="M138 320 C136 346, 137 370, 143 392" stroke="#050505" stroke-width="7" fill="none" stroke-linecap="round"/>
-  <path d="M181 341 C176 365, 176 392, 183 414" stroke="#050505" stroke-width="7" fill="none" stroke-linecap="round"/>
-  <path d="M229 352 C225 378, 226 408, 231 429" stroke="#050505" stroke-width="7" fill="none" stroke-linecap="round"/>
-  <path d="M282 355 C286 384, 284 412, 279 431" stroke="#050505" stroke-width="7" fill="none" stroke-linecap="round"/>
-  <path d="M329 344 C337 371, 337 397, 331 417" stroke="#050505" stroke-width="7" fill="none" stroke-linecap="round"/>
-  <path d="M372 325 C384 350, 381 375, 367 396" stroke="#050505" stroke-width="7" fill="none" stroke-linecap="round"/>
-
-  <path d="M126 360 C199 394, 315 397, 386 357" stroke="#050505" stroke-width="8" fill="none" stroke-linecap="round"/>
-
-  <path d="M82 288 C65 275, 56 293, 61 313" fill="none" stroke="#050505" stroke-width="10" stroke-linecap="round"/>
-  <path d="M433 292 C452 278, 461 296, 454 316" fill="none" stroke="#050505" stroke-width="10" stroke-linecap="round"/>
-
-  <path d="M226 443 C247 459, 278 459, 298 443" fill="none" stroke="#050505" stroke-width="7" stroke-linecap="round"/>
+  <path d="M694 394L734 392L728 432" fill="none" stroke="#14B8A6" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
 </svg>
