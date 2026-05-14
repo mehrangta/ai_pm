@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { SHADOW_ITEM_MARKER_PROPERTY_NAME, dndzone } from 'svelte-dnd-action';
 	import {
 		boardAction,
@@ -39,6 +40,7 @@
 		reorderColumns: { inFlight: false, pending: null },
 		moveCards: { inFlight: false, pending: null }
 	};
+	const pendingCardDescriptions = new SvelteMap<string, string>();
 
 	let board = $state<BoardInfo | null>(null);
 	let columns = $state<BoardColumn[]>([]);
@@ -277,11 +279,26 @@
 		);
 	}
 
+	function updateCardInColumns(cardId: string, updateCard: (card: BoardCard) => BoardCard) {
+		let cardFound = false;
+
+		columns = columns.map((column) => {
+			if (!column.cards.some((card) => card.id === cardId)) {
+				return column;
+			}
+
+			cardFound = true;
+			return {
+				...column,
+				cards: column.cards.map((card) => (card.id === cardId ? updateCard(card) : card))
+			};
+		});
+
+		return cardFound;
+	}
+
 	function replaceCard(cardId: string, nextCard: BoardCard) {
-		columns = columns.map((column) => ({
-			...column,
-			cards: column.cards.map((card) => (card.id === cardId ? nextCard : card))
-		}));
+		updateCardInColumns(cardId, () => nextCard);
 	}
 
 	function removeCard(cardId: string) {
@@ -299,10 +316,11 @@
 	}
 
 	function updateLocalCardDescription(cardId: string, description: string) {
-		columns = columns.map((column) => ({
-			...column,
-			cards: column.cards.map((card) => (card.id === cardId ? { ...card, description } : card))
-		}));
+		if (cardId.startsWith('pending-')) {
+			pendingCardDescriptions.set(cardId, description);
+		}
+
+		updateCardInColumns(cardId, (card) => ({ ...card, description }));
 	}
 
 	async function handlePaste(event: ClipboardEvent) {
@@ -346,6 +364,7 @@
 			}
 		};
 
+		pendingCardDescriptions.set(pendingCard.id, pendingCard.description);
 		addCardToColumn(columnId, pendingCard);
 		copyMessage = 'Image uploading...';
 
@@ -356,6 +375,7 @@
 
 			if (image.dataUrl.length > maxImageBytes) {
 				removeCard(pendingCard.id);
+				pendingCardDescriptions.delete(pendingCard.id);
 				URL.revokeObjectURL(previewUrl);
 				copyMessage = '';
 				pasteError = 'Compressed image is still over 1.5 MB.';
@@ -363,13 +383,16 @@
 			}
 		} catch {
 			removeCard(pendingCard.id);
+			pendingCardDescriptions.delete(pendingCard.id);
 			URL.revokeObjectURL(previewUrl);
 			copyMessage = '';
 			pasteError = 'The pasted image could not be compressed.';
 			return;
 		}
 
-		const uploadedDescription = cardDescription(pendingCard.id, pendingCard.description);
+		const uploadedDescription =
+			pendingCardDescriptions.get(pendingCard.id) ??
+			cardDescription(pendingCard.id, pendingCard.description);
 		let savedCard: CreateImageCardResponse;
 
 		try {
@@ -386,13 +409,15 @@
 			});
 		} catch {
 			removeCard(pendingCard.id);
+			pendingCardDescriptions.delete(pendingCard.id);
 			copyMessage = '';
 			pasteError = 'The pasted image could not be uploaded.';
 			URL.revokeObjectURL(previewUrl);
 			return;
 		}
 
-		const latestDescription = cardDescription(pendingCard.id, uploadedDescription);
+		const latestDescription =
+			pendingCardDescriptions.get(pendingCard.id) ?? cardDescription(pendingCard.id, uploadedDescription);
 
 		replaceCard(pendingCard.id, {
 			...pendingCard,
@@ -413,9 +438,11 @@
 			}
 
 			copyMessage = 'Image uploaded.';
+			await loadBoard();
 		} catch {
 			copyMessage = 'Image uploaded, but text sync failed.';
 		} finally {
+			pendingCardDescriptions.delete(pendingCard.id);
 			URL.revokeObjectURL(previewUrl);
 		}
 	}
