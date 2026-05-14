@@ -39,6 +39,7 @@ export const GET: RequestHandler = async (event) => {
 		.select({
 			id: kanbanBoard.id,
 			title: kanbanBoard.title,
+			projectLocation: kanbanBoard.projectLocation,
 			updatedAt: kanbanBoard.updatedAt
 		})
 		.from(kanbanBoard)

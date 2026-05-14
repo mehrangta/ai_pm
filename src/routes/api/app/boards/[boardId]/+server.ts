@@ -71,7 +71,12 @@ const requireBoard = async (event: RequestEvent) => {
 
 	const db = dbFor(event);
 	const [board] = await db
-		.select({ id: kanbanBoard.id, title: kanbanBoard.title, userId: kanbanBoard.userId })
+		.select({
+			id: kanbanBoard.id,
+			title: kanbanBoard.title,
+			projectLocation: kanbanBoard.projectLocation,
+			userId: kanbanBoard.userId
+		})
 		.from(kanbanBoard)
 		.where(and(eq(kanbanBoard.id, boardId), eq(kanbanBoard.userId, user.id)))
 		.limit(1);
@@ -173,6 +178,17 @@ export const POST: RequestHandler = async (event) => {
 	const { db, board } = context;
 	const body = await readBody(event.request);
 	const action = textFrom(body, 'action', 80);
+
+	if (action === 'updateProjectLocation') {
+		const projectLocation = textFrom(body, 'projectLocation', 1024);
+
+		await db
+			.update(kanbanBoard)
+			.set({ projectLocation, updatedAt: new Date() })
+			.where(eq(kanbanBoard.id, board.id));
+
+		return apiJson(event, { ok: true });
+	}
 
 	if (action === 'createColumn') {
 		const title = textFrom(body, 'title', 100);

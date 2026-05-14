@@ -9,6 +9,7 @@ export type AppUser = {
 export type BoardSummary = {
 	id: string;
 	title: string;
+	projectLocation: string;
 	updatedAt: string | Date;
 };
 
@@ -47,6 +48,7 @@ export type BoardResponse = {
 	board: {
 		id: string;
 		title: string;
+		projectLocation: string;
 		userId: string;
 	};
 	columns: BoardColumn[];

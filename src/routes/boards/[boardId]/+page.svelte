@@ -16,6 +16,7 @@
 	type BoardInfo = {
 		id: string;
 		title: string;
+		projectLocation: string;
 		userId: string;
 	};
 
@@ -47,6 +48,8 @@
 	let orderError = $state('');
 	let copyMessage = $state('');
 	let query = $state('');
+	let projectLocationDraft = $state('');
+	let projectLocationSaving = $state(false);
 
 	onMount(() => {
 		void loadBoard();
@@ -58,6 +61,7 @@
 		try {
 			const data = await getBoard(currentBoardId());
 			board = data.board;
+			projectLocationDraft = data.board.projectLocation;
 			columns = data.columns.map((column) => ({
 				...column,
 				cards: column.cards.map((card) => ({ ...card }))
@@ -166,6 +170,33 @@
 			orderError = error instanceof Error ? error.message : 'Board update failed';
 			await loadBoard();
 		}
+	}
+
+	async function saveProjectLocation() {
+		if (!board || projectLocationSaving || projectLocationDraft.trim() === board.projectLocation) {
+			return;
+		}
+
+		const projectLocation = projectLocationDraft.trim();
+		projectLocationSaving = true;
+		notice = '';
+		orderError = '';
+
+		try {
+			await boardAction(currentBoardId(), { action: 'updateProjectLocation', projectLocation });
+			board = { ...board, projectLocation };
+			copyMessage = 'Project location saved.';
+		} catch (error) {
+			orderError = error instanceof Error ? error.message : 'Project location could not be saved';
+			projectLocationDraft = board.projectLocation;
+		} finally {
+			projectLocationSaving = false;
+		}
+	}
+
+	function handleProjectLocationSubmit(event: SubmitEvent) {
+		event.preventDefault();
+		void saveProjectLocation();
 	}
 
 	async function createColumnFromPrompt() {
@@ -687,6 +718,20 @@
 		</div>
 
 		<div class="top-actions">
+			<form class="project-location-form" onsubmit={handleProjectLocationSubmit}>
+				<label>
+					Project location
+					<input
+						bind:value={projectLocationDraft}
+						disabled={!board || projectLocationSaving}
+						maxlength="1024"
+						placeholder="D:\Projects\Trade Router"
+						aria-label="Project location"
+						onblur={() => void saveProjectLocation()}
+					/>
+				</label>
+			</form>
+
 			<label>
 				Paste target
 				<select bind:value={selectedColumnId} disabled={!columns.length}>
@@ -976,6 +1021,16 @@
 		display: flex;
 		align-items: center;
 		gap: 10px;
+	}
+
+	.project-location-form {
+		flex: 0 1 360px;
+		min-width: 260px;
+	}
+
+	.project-location-form label,
+	.project-location-form input {
+		width: 100%;
 	}
 
 	label {
@@ -1383,6 +1438,7 @@
 			width: 100%;
 		}
 
+		.top-actions input,
 		.top-actions button,
 		select {
 			width: 100%;
