@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
-	import { SvelteMap } from 'svelte/reactivity';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { SHADOW_ITEM_MARKER_PROPERTY_NAME, dndzone } from 'svelte-dnd-action';
 	import {
 		boardAction,
@@ -34,13 +34,25 @@
 		position: number;
 	};
 
+	type PendingImageUpload = {
+		cardId: string;
+		savedDescription: string;
+		pendingDescription: string | null;
+		syncPromise: Promise<void> | null;
+	};
+
 	const flipDurationMs = 160;
 	const maxImageBytes = 1_500_000;
+	const pendingUploadEditGraceMs = 1_500;
+	const pendingUploadSyncAttempts = 6;
+	const pendingUploadSyncDelayMs = 500;
 	const orderSaveState: Record<OrderAction, OrderSaveState> = {
 		reorderColumns: { inFlight: false, pending: null },
 		moveCards: { inFlight: false, pending: null }
 	};
+	const pendingImageCardIds = new SvelteSet<string>();
 	const pendingCardDescriptions = new SvelteMap<string, string>();
+	const pendingImageUploads = new SvelteMap<string, PendingImageUpload>();
 
 	let board = $state<BoardInfo | null>(null);
 	let columns = $state<BoardColumn[]>([]);
@@ -100,7 +112,15 @@
 	}
 
 	function isPendingCard(card: BoardCard) {
-		return card.id.startsWith('pending-');
+		return isPendingCardId(card.id);
+	}
+
+	function isPendingCardId(cardId: string) {
+		return pendingImageCardIds.has(cardId);
+	}
+
+	function hasPendingImageUpload(cardId: string) {
+		return pendingImageUploads.has(cardId);
 	}
 
 	function handleCardConsider(columnId: string, event: CustomEvent<{ items: BoardCard[] }>) {
@@ -240,7 +260,7 @@
 
 		if (!description || description === card.description) return;
 
-		if (isPendingCard(card)) {
+		if (isPendingCard(card) || hasPendingImageUpload(card.id)) {
 			updateLocalCardDescription(card.id, description);
 			copyMessage = 'Card text updated. Image upload is still finishing.';
 			return;
@@ -297,10 +317,6 @@
 		return cardFound;
 	}
 
-	function replaceCard(cardId: string, nextCard: BoardCard) {
-		updateCardInColumns(cardId, () => nextCard);
-	}
-
 	function removeCard(cardId: string) {
 		columns = columns.map((column) => ({
 			...column,
@@ -316,11 +332,81 @@
 	}
 
 	function updateLocalCardDescription(cardId: string, description: string) {
-		if (cardId.startsWith('pending-')) {
+		if (isPendingCardId(cardId)) {
 			pendingCardDescriptions.set(cardId, description);
 		}
 
+		if (isPendingCardId(cardId) || hasPendingImageUpload(cardId)) {
+			void queuePendingUploadDescriptionSync(cardId, description)?.catch(() => {
+				copyMessage = 'Card text updated, but upload text sync failed.';
+			});
+		}
+
 		updateCardInColumns(cardId, (card) => ({ ...card, description }));
+	}
+
+	function queuePendingUploadDescriptionSync(cardId: string, description: string) {
+		const upload = pendingImageUploads.get(cardId);
+
+		if (!upload || description === upload.savedDescription) {
+			return upload?.syncPromise ?? null;
+		}
+
+		upload.pendingDescription = description;
+		upload.syncPromise ??= flushPendingUploadDescription(cardId);
+
+		return upload.syncPromise;
+	}
+
+	async function flushPendingUploadDescription(cardId: string) {
+		const upload = pendingImageUploads.get(cardId);
+
+		if (!upload) return;
+
+		try {
+			while (upload.pendingDescription && upload.pendingDescription !== upload.savedDescription) {
+				const description = upload.pendingDescription;
+
+				await savePendingUploadDescription(upload.cardId, description);
+
+				upload.savedDescription = description;
+				if (upload.pendingDescription === description) {
+					upload.pendingDescription = null;
+				}
+			}
+		} finally {
+			upload.syncPromise = null;
+		}
+	}
+
+	async function savePendingUploadDescription(cardId: string, description: string) {
+		let lastError: unknown;
+
+		for (let attempt = 1; attempt <= pendingUploadSyncAttempts; attempt += 1) {
+			try {
+				await boardAction(currentBoardId(), {
+					action: 'updateCard',
+					cardId,
+					description,
+					color: '#ffffff'
+				});
+				return;
+			} catch (error) {
+				lastError = error;
+				if (attempt === pendingUploadSyncAttempts) break;
+				await delay(pendingUploadSyncDelayMs * attempt);
+			}
+		}
+
+		throw lastError;
+	}
+
+	function errorMessage(error: unknown) {
+		return error instanceof Error ? error.message : 'Unknown error';
+	}
+
+	function delay(ms: number) {
+		return new Promise((resolve) => window.setTimeout(resolve, ms));
 	}
 
 	async function handlePaste(event: ClipboardEvent) {
@@ -350,7 +436,7 @@
 
 		const previewUrl = URL.createObjectURL(file);
 		const pendingCard: BoardCard = {
-			id: `pending-${crypto.randomUUID()}`,
+			id: crypto.randomUUID(),
 			columnId,
 			description: 'Pasted image',
 			color: '#ffffff',
@@ -364,6 +450,7 @@
 			}
 		};
 
+		pendingImageCardIds.add(pendingCard.id);
 		pendingCardDescriptions.set(pendingCard.id, pendingCard.description);
 		addCardToColumn(columnId, pendingCard);
 		copyMessage = 'Image uploading...';
@@ -375,6 +462,7 @@
 
 			if (image.dataUrl.length > maxImageBytes) {
 				removeCard(pendingCard.id);
+				pendingImageCardIds.delete(pendingCard.id);
 				pendingCardDescriptions.delete(pendingCard.id);
 				URL.revokeObjectURL(previewUrl);
 				copyMessage = '';
@@ -383,12 +471,15 @@
 			}
 		} catch {
 			removeCard(pendingCard.id);
+			pendingImageCardIds.delete(pendingCard.id);
 			pendingCardDescriptions.delete(pendingCard.id);
 			URL.revokeObjectURL(previewUrl);
 			copyMessage = '';
 			pasteError = 'The pasted image could not be compressed.';
 			return;
 		}
+
+		await delay(pendingUploadEditGraceMs);
 
 		const uploadedDescription =
 			pendingCardDescriptions.get(pendingCard.id) ??
@@ -398,6 +489,7 @@
 		try {
 			savedCard = await boardAction<CreateImageCardResponse>(currentBoardId(), {
 				action: 'createImageCard',
+				cardId: pendingCard.id,
 				columnId,
 				description: uploadedDescription,
 				color: '#ffffff',
@@ -407,9 +499,19 @@
 				width: image.width,
 				height: image.height
 			});
+			const upload = {
+				cardId: savedCard.cardId,
+				savedDescription: uploadedDescription,
+				pendingDescription: null,
+				syncPromise: null
+			};
+			pendingImageUploads.set(pendingCard.id, upload);
+			pendingImageUploads.set(savedCard.cardId, upload);
 		} catch {
 			removeCard(pendingCard.id);
+			pendingImageCardIds.delete(pendingCard.id);
 			pendingCardDescriptions.delete(pendingCard.id);
+			pendingImageUploads.delete(pendingCard.id);
 			copyMessage = '';
 			pasteError = 'The pasted image could not be uploaded.';
 			URL.revokeObjectURL(previewUrl);
@@ -419,30 +521,37 @@
 		const latestDescription =
 			pendingCardDescriptions.get(pendingCard.id) ?? cardDescription(pendingCard.id, uploadedDescription);
 
-		replaceCard(pendingCard.id, {
-			...pendingCard,
+		updateCardInColumns(pendingCard.id, (card) => ({
+			...card,
 			id: savedCard.cardId,
 			description: latestDescription,
 			position: savedCard.position,
 			image
-		});
+		}));
 
 		try {
-			if (latestDescription !== uploadedDescription) {
-				await boardAction(currentBoardId(), {
-					action: 'updateCard',
-					cardId: savedCard.cardId,
-					description: latestDescription,
-					color: pendingCard.color
-				});
+			let syncFailed = false;
+
+			try {
+				const syncPromise = queuePendingUploadDescriptionSync(pendingCard.id, latestDescription);
+
+				if (syncPromise) {
+					await syncPromise;
+				}
+			} catch (error) {
+				syncFailed = true;
+				copyMessage = `Image uploaded, but text sync failed: ${errorMessage(error)}`;
 			}
 
-			copyMessage = 'Image uploaded.';
-			await loadBoard();
-		} catch {
-			copyMessage = 'Image uploaded, but text sync failed.';
+			if (!syncFailed) {
+				copyMessage = 'Image uploaded.';
+				await loadBoard();
+			}
 		} finally {
+			pendingImageCardIds.delete(pendingCard.id);
 			pendingCardDescriptions.delete(pendingCard.id);
+			pendingImageUploads.delete(pendingCard.id);
+			pendingImageUploads.delete(savedCard.cardId);
 			URL.revokeObjectURL(previewUrl);
 		}
 	}
@@ -703,7 +812,7 @@
 	}
 
 	function cardKind(card: BoardCard) {
-		if (isPendingCard(card)) return 'Uploading';
+		if (isPendingCard(card) || hasPendingImageUpload(card.id)) return 'Uploading';
 		return card.image ? 'Image' : 'Card';
 	}
 

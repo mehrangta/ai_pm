@@ -14,6 +14,7 @@ const MAX_IMAGE_BYTES = 1_500_000;
 const DEFAULT_COLUMN_COLOR = '#f4f4f5';
 const DEFAULT_CARD_COLOR = '#ffffff';
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const readBody = async (request: Request) => {
 	try {
@@ -262,6 +263,8 @@ export const POST: RequestHandler = async (event) => {
 		const description =
 			textFrom(body, 'description', 2000) || (action === 'createImageCard' ? 'Pasted image' : '');
 		const color = colorFrom(body, 'color', DEFAULT_CARD_COLOR);
+		const requestedCardId = action === 'createImageCard' ? textFrom(body, 'cardId', 80) : '';
+		const cardId = UUID_PATTERN.test(requestedCardId) ? requestedCardId : undefined;
 
 		if (!columnId || !description || !(await requireColumn(db, board.id, columnId))) {
 			return apiError(event, 400, 'Card details are invalid');
@@ -292,7 +295,7 @@ export const POST: RequestHandler = async (event) => {
 			const cards = await db.select({ id: kanbanCard.id }).from(kanbanCard).where(eq(kanbanCard.columnId, columnId));
 			const [card] = await db
 				.insert(kanbanCard)
-				.values({ columnId, description, color, position: cards.length })
+				.values({ ...(cardId ? { id: cardId } : {}), columnId, description, color, position: cards.length })
 				.returning({ id: kanbanCard.id });
 
 			await db.insert(kanbanCardImage).values({
