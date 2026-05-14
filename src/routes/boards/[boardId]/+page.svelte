@@ -277,7 +277,21 @@
 
 		if (!window.confirm('Delete this card?')) return;
 
-		await postAction('deleteCard', { cardId: card.id });
+		notice = '';
+		orderError = '';
+		copyMessage = '';
+
+		const snapshot = columns;
+		removeCard(card.id);
+
+		try {
+			await boardAction(currentBoardId(), { action: 'deleteCard', cardId: card.id });
+			copyMessage = 'Card deleted.';
+		} catch (error) {
+			columns = snapshot;
+			orderError = error instanceof Error ? error.message : 'Card delete failed';
+			await loadBoard();
+		}
 	}
 
 	async function handleSignOut(event: SubmitEvent) {
