@@ -103,9 +103,12 @@ const requireCard = async (db: ReturnType<typeof getDb>, boardId: string, cardId
 	const [card] = await db
 		.select({ id: kanbanCard.id, columnId: kanbanCard.columnId })
 		.from(kanbanCard)
-		.innerJoin(kanbanColumn, eq(kanbanCard.columnId, kanbanColumn.id))
-		.where(and(eq(kanbanCard.id, cardId), eq(kanbanColumn.boardId, boardId)))
+		.where(eq(kanbanCard.id, cardId))
 		.limit(1);
+
+	if (!card || !(await requireColumn(db, boardId, card.columnId))) {
+		return null;
+	}
 
 	return card;
 };
