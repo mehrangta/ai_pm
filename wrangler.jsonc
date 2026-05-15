@@ -13,7 +13,7 @@
 	"vars": {
 		"ORIGIN": "https://your-worker.workers.dev",
 		"PUBLIC_API_BASE_URL": "https://your-worker.workers.dev",
-		"CORS_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,tauri://localhost,http://tauri.localhost,https://your-worker.workers.dev"
+		"CORS_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,tauri://localhost,http://tauri.localhost,https://tauri.localhost,https://your-worker.workers.dev"
 	},
 	"workers_dev": true,
 	"preview_urls": true,
