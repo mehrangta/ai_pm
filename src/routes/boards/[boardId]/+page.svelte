@@ -869,6 +869,64 @@
 		copyMessage = 'Image clipboard copy is not available in this environment.';
 	}
 
+	async function copyCardAll(card: BoardCard) {
+		copyMessage = '';
+
+		if (isPendingCard(card)) {
+			copyMessage = 'Image upload is still finishing.';
+			return;
+		}
+
+		if (!card.image) {
+			await copyCardText(card);
+			return;
+		}
+
+		// Try browser clipboard with both text + image in one ClipboardItem
+		try {
+			if ('ClipboardItem' in window && navigator.clipboard?.write) {
+				const item = window.ClipboardItem;
+				const textBlob = new Blob([card.description], { type: 'text/plain' });
+				let imageBlob: Blob;
+
+				const mimeType = card.image.mimeType || dataUrlMimeType(card.image.dataUrl) || 'image/png';
+				const supports = (type: string) => !item.supports || item.supports(type);
+
+				if (supports(mimeType) && supports('text/plain')) {
+					imageBlob = await dataUrlToBlob(card.image.dataUrl, mimeType);
+					await navigator.clipboard.write([
+						new item({ 'text/plain': textBlob, [mimeType]: imageBlob })
+					]);
+					copyMessage = 'Text + image copied.';
+					return;
+				}
+
+				if (supports('image/png') && supports('text/plain')) {
+					imageBlob = await dataUrlToPngBlob(card.image.dataUrl);
+					await navigator.clipboard.write([
+						new item({ 'text/plain': textBlob, 'image/png': imageBlob })
+					]);
+					copyMessage = 'Text + image copied.';
+					return;
+				}
+			}
+		} catch {
+			// Fall through to Tauri fallback (image only).
+		}
+
+		// Tauri fallback: copy image only (text gets overwritten by image)
+		try {
+			if (await copyImageWithTauri(card)) {
+				copyMessage = 'Image copied (text not included in this mode).';
+				return;
+			}
+		} catch {
+			// Fall through.
+		}
+
+		copyMessage = 'Clipboard copy is not available in this environment.';
+	}
+
 	function shortId(id: string) {
 		return id.replace(/-/g, '').slice(0, 6).toUpperCase();
 	}
@@ -1051,6 +1109,15 @@
 										disabled={isPendingCard(card)}
 									>
 										Copy image
+									</button>
+									<button
+										class="copy-button copy-all-button"
+										type="button"
+										onclick={() => copyCardAll(card)}
+										disabled={isPendingCard(card)}
+										title="Copy text (Ctrl+V) and image (Alt+V) to clipboard"
+									>
+										Copy all
 									</button>
 								{/if}
 
@@ -1644,6 +1711,17 @@
 		color: var(--card-color);
 		min-height: 34px;
 		padding: 6px 10px;
+	}
+
+	.copy-all-button {
+		border-color: color-mix(in srgb, var(--tertiary) 55%, transparent);
+		color: var(--tertiary);
+		background: color-mix(in srgb, var(--tertiary) 8%, var(--surface-container-lowest));
+	}
+
+	.copy-all-button:hover {
+		border-color: var(--tertiary);
+		background: color-mix(in srgb, var(--tertiary) 18%, var(--surface-container-lowest));
 	}
 
 	.card-actions {
