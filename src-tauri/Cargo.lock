@@ -40,6 +40,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-debug-tools",
  "tauri-plugin-dialog",
+ "tauri-plugin-fs",
  "tauri-plugin-log",
  "tauri-plugin-shell",
 ]

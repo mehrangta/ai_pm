@@ -64,6 +64,14 @@
 	let projectLocationDraft = $state('');
 	let projectLocationSaving = $state(false);
 	let gitStatus = $state<'unknown' | 'checking' | 'git' | 'no-git'>('unknown');
+	let deviceTools = $state<Record<string, 'unknown' | 'checking' | 'installed' | 'missing'>>({
+		git: 'unknown',
+		codex: 'unknown',
+		gh: 'unknown'
+	});
+	let applyTargetColumnId = $state('');
+	let applyingCardId = $state('');
+	let applyProgress = $state('');
 
 	onMount(() => {
 		void loadBoard();
@@ -86,6 +94,7 @@
 			}
 
 			void checkGitStatus(data.board.projectLocation);
+			void checkDeviceTools();
 		} catch (error) {
 			if (error instanceof ApiError && error.status === 401) {
 				await goto('/login');
@@ -957,6 +966,186 @@
 	function visibleCards(column: BoardColumn) {
 		return isSearchActive() ? column.cards.filter(matchesQuery) : column.cards;
 	}
+
+	async function checkDeviceTools() {
+		try {
+			const { isTauri } = await import('@tauri-apps/api/core');
+			if (!isTauri()) return;
+
+			const { Command } = await import('@tauri-apps/plugin-shell');
+
+			for (const tool of ['git', 'codex', 'gh'] as const) {
+				deviceTools = { ...deviceTools, [tool]: 'checking' };
+				try {
+					const output = await Command.create(tool, ['--version']).execute();
+					deviceTools = { ...deviceTools, [tool]: output.code === 0 ? 'installed' : 'missing' };
+				} catch {
+					deviceTools = { ...deviceTools, [tool]: 'missing' };
+				}
+			}
+		} catch {
+			// Not running in Tauri.
+		}
+	}
+
+	function slugify(text: string) {
+		return text
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-|-$/g, '')
+			.slice(0, 48);
+	}
+
+	async function saveImageToTempFile(card: BoardCard): Promise<string> {
+		if (!card.image) return '';
+
+		const base64 = card.image.dataUrl.split(',')[1];
+		if (!base64) return '';
+
+		const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+		const ext = card.image.mimeType === 'image/webp' ? 'webp' : 'jpg';
+		const fileName = `codex-card-${Date.now()}.${ext}`;
+
+		const { writeFile, BaseDirectory } = await import('@tauri-apps/plugin-fs');
+		await writeFile(fileName, bytes, { baseDir: BaseDirectory.Temp });
+
+		const { tempDir } = await import('@tauri-apps/api/path');
+		const tmp = await tempDir();
+
+		return `${tmp}${fileName}`;
+	}
+
+	async function cleanupTempFile(path: string) {
+		if (!path) return;
+		try {
+			const { remove, BaseDirectory } = await import('@tauri-apps/plugin-fs');
+			const fileName = path.split(/[\\/]/).pop() ?? '';
+			await remove(fileName, { baseDir: BaseDirectory.Temp });
+		} catch {
+			// Temp file cleanup is best-effort.
+		}
+	}
+
+	async function execInProject(cmd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+		const { Command } = await import('@tauri-apps/plugin-shell');
+		const cwd = board?.projectLocation;
+		const command = Command.create(cmd, args, cwd ? { cwd } : undefined);
+		const result = await command.execute();
+		return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr };
+	}
+
+	async function applyCard(card: BoardCard) {
+		if (!board?.projectLocation) {
+			orderError = 'Set a project location before applying.';
+			return;
+		}
+
+		if (deviceTools.git !== 'installed') {
+			orderError = 'Git is not installed on this device.';
+			return;
+		}
+
+		if (deviceTools.codex !== 'installed') {
+			orderError = 'Codex CLI is not installed on this device.';
+			return;
+		}
+
+		const slug = slugify(card.description) || 'card-task';
+		const branchName = `feat/${slug}`;
+		const commitMsg = card.description.slice(0, 72);
+		let imagePath = '';
+
+		applyingCardId = card.id;
+		applyProgress = '';
+		orderError = '';
+		copyMessage = '';
+
+		try {
+			// 1. Save image temp file if needed
+			if (card.image) {
+				applyProgress = 'Saving image...';
+				imagePath = await saveImageToTempFile(card);
+			}
+
+			// 2. Create feature branch
+			applyProgress = 'Creating branch...';
+			const branchResult = await execInProject('git', ['checkout', '-b', branchName]);
+			if (branchResult.code !== 0) {
+				throw new Error(`Branch creation failed: ${branchResult.stderr}`);
+			}
+
+			// 3. Run codex exec
+			applyProgress = 'Running Codex...';
+			const codexArgs = ['exec', card.description, '--cd', board.projectLocation, '--sandbox', 'workspace-write', '-a', 'never'];
+			if (imagePath) {
+				codexArgs.splice(2, 0, '-i', imagePath);
+			}
+			const codexResult = await execInProject('codex', codexArgs);
+			if (codexResult.code !== 0) {
+				throw new Error(`Codex failed: ${codexResult.stderr || codexResult.stdout}`);
+			}
+
+			// 4. Stage and commit
+			applyProgress = 'Committing...';
+			await execInProject('git', ['add', '-A']);
+			const commitResult = await execInProject('git', ['commit', '-m', `feat: ${commitMsg}`]);
+			if (commitResult.code !== 0 && !commitResult.stdout.includes('nothing to commit')) {
+				throw new Error(`Commit failed: ${commitResult.stderr}`);
+			}
+
+			// 5. Push branch
+			applyProgress = 'Pushing...';
+			const pushResult = await execInProject('git', ['push', '-u', 'origin', branchName]);
+			if (pushResult.code !== 0) {
+				throw new Error(`Push failed: ${pushResult.stderr}`);
+			}
+
+			// 6. Create PR (if gh is available)
+			if (deviceTools.gh === 'installed') {
+				applyProgress = 'Creating PR...';
+				await execInProject('gh', [
+					'pr', 'create', '--base', 'main', '--head', branchName,
+					'--title', `feat: ${commitMsg}`,
+					'--body', card.description
+				]);
+			}
+
+			// 7. Switch back to main
+			await execInProject('git', ['checkout', 'main']);
+
+			// 8. Move card to apply target column
+			if (applyTargetColumnId && applyTargetColumnId !== card.columnId) {
+				const targetColumn = columns.find((c) => c.id === applyTargetColumnId);
+				if (targetColumn) {
+					const sourceColumn = columns.find((c) => c.id === card.columnId);
+					if (sourceColumn) {
+						sourceColumn.cards = sourceColumn.cards.filter((c) => c.id !== card.id);
+						targetColumn.cards = [...targetColumn.cards, { ...card, columnId: applyTargetColumnId }];
+						columns = [...columns];
+						persistOrder('moveCards', {
+							columns: columns.map((c) => ({ id: c.id, cardIds: c.cards.map((cd) => cd.id) }))
+						});
+					}
+				}
+			}
+
+			copyMessage = `Applied! ${deviceTools.gh === 'installed' ? 'PR created.' : 'Branch pushed (install gh CLI for auto PR).'}`;
+		} catch (error) {
+			orderError = error instanceof Error ? error.message : 'Apply failed.';
+
+			// Try to switch back to main on failure
+			try {
+				await execInProject('git', ['checkout', 'main']);
+				await execInProject('git', ['branch', '-D', branchName]);
+			} catch {
+				// Best-effort cleanup.
+			}
+		} finally {
+			await cleanupTempFile(imagePath);
+			applyingCardId = '';
+			applyProgress = '';
+		}
+	}
 </script>
 
 <svelte:window onpaste={handlePaste} />
@@ -1015,6 +1204,29 @@
 					{/each}
 				</select>
 			</label>
+
+			<label>
+				Apply target
+				<select bind:value={applyTargetColumnId} disabled={!columns.length}>
+					{#each columns as column (column.id)}
+						<option value={column.id}>{column.title}</option>
+					{/each}
+				</select>
+			</label>
+
+			<div class="tool-badges">
+				{#each Object.entries(deviceTools) as [tool, status]}
+					<span
+						class="tool-badge"
+						class:tool-installed={status === 'installed'}
+						class:tool-missing={status === 'missing'}
+						title={`${tool}: ${status}`}
+					>
+						<span class="git-dot" aria-hidden="true"></span>
+						{tool}
+					</span>
+				{/each}
+			</div>
 		</div>
 	</header>
 
@@ -1128,6 +1340,15 @@
 										onclick={() => updateCardFromPrompt(card)}
 									>
 										Edit
+									</button>
+									<button
+										type="button"
+										class="small-button apply-button"
+										onclick={() => applyCard(card)}
+										disabled={isPendingCard(card) || applyingCardId !== '' || deviceTools.codex !== 'installed' || deviceTools.git !== 'installed' || !board?.projectLocation}
+										title={!board?.projectLocation ? 'Set project location first' : deviceTools.git !== 'installed' ? 'Git not installed' : deviceTools.codex !== 'installed' ? 'Codex not installed' : 'Apply card via Codex'}
+									>
+										{applyingCardId === card.id ? applyProgress || 'Applying...' : 'Apply'}
 									</button>
 									<button
 										type="button"
@@ -1396,6 +1617,65 @@
 
 	.git-checking .git-dot {
 		animation: pulse 1s infinite;
+	}
+
+	.tool-badges {
+		display: flex;
+		gap: 5px;
+		flex-wrap: wrap;
+	}
+
+	.tool-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		height: 24px;
+		padding: 0 7px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 99px;
+		background: var(--surface-container-high);
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.6rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		white-space: nowrap;
+	}
+
+	.tool-installed {
+		border-color: rgba(34, 197, 94, 0.4);
+		color: #4ade80;
+	}
+
+	.tool-installed .git-dot {
+		background: #22c55e;
+		box-shadow: 0 0 5px rgba(34, 197, 94, 0.5);
+	}
+
+	.tool-missing {
+		border-color: rgba(239, 68, 68, 0.3);
+		color: #f87171;
+	}
+
+	.tool-missing .git-dot {
+		background: #ef4444;
+		box-shadow: 0 0 4px rgba(239, 68, 68, 0.35);
+	}
+
+	.apply-button {
+		border-color: color-mix(in srgb, var(--accent-violet) 60%, transparent);
+		color: var(--accent-violet);
+	}
+
+	.apply-button:hover:not(:disabled) {
+		border-color: var(--accent-violet);
+		background: color-mix(in srgb, var(--accent-violet) 15%, var(--surface-container-lowest));
+		color: #a78bfa;
+	}
+
+	.apply-button:disabled {
+		opacity: 0.4;
 	}
 
 	.field-label,

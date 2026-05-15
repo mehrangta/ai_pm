@@ -17,12 +17,25 @@
         {
           "name": "git",
           "cmd": "git",
-          "args": [
-            "rev-parse",
-            "--git-dir"
-          ]
+          "args": true
+        },
+        {
+          "name": "codex",
+          "cmd": "codex",
+          "args": true
+        },
+        {
+          "name": "gh",
+          "cmd": "gh",
+          "args": true
         }
       ]
+    },
+    "fs:allow-write-file",
+    "fs:allow-remove",
+    {
+      "identifier": "fs:scope",
+      "allow": ["$TEMP/**"]
     }
   ]
 }
