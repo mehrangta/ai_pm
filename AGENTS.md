@@ -30,6 +30,12 @@
 - Before public pushes, inspect staged files with `git diff --cached --name-only` and scan for secret-like values.
 - Do not revert unrelated user edits. If `AGENTS.md` or docs are already dirty, update them directly instead of resetting.
 
+## Debugging
+
+- Tauri debug tooling is installed through `tauri-plugin-debug-tools`. Use it first when diagnosing desktop/WebView-only behavior, API failures from the Tauri app, blank screens, console errors, or UI state that is hard to inspect from screenshots.
+- Frontend debug setup lives in `src/lib/debug-tools.ts` and is initialized from `src/routes/+layout.ts`; keep debug logging sanitized and avoid request bodies, cookies, tokens, database values, or project paths that could be confidential.
+- For Tauri debug features, ensure matching permissions stay present in `src-tauri/capabilities/default.json`; currently this includes `debug-tools:default`.
+
 ## Verification
 
 - Run `bun run check` before committing source changes.
