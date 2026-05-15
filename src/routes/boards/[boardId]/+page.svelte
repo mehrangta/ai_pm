@@ -9,7 +9,6 @@
 		boardAction,
 		getBoard,
 		ApiError,
-		signOut,
 		type BoardColumn,
 		type BoardCard
 	} from '$lib/api';
@@ -322,12 +321,6 @@
 			orderError = error instanceof Error ? error.message : 'Card delete failed';
 			await loadBoard();
 		}
-	}
-
-	async function handleSignOut(event: SubmitEvent) {
-		event.preventDefault();
-		await signOut();
-		await goto('/login');
 	}
 
 	function resetTransientMessages() {
@@ -923,10 +916,6 @@
 					{/each}
 				</select>
 			</label>
-
-			<form onsubmit={handleSignOut}>
-				<button type="submit" class="sign-out" aria-label="Sign out" title="Sign out">Sign out</button>
-			</form>
 		</div>
 	</header>
 
@@ -1257,8 +1246,7 @@
 	}
 
 	.column-header,
-	.card-actions,
-	.top-actions form {
+	.card-actions {
 		display: flex;
 		gap: 8px;
 	}
