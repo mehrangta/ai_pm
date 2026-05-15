@@ -10,6 +10,19 @@
     "clipboard-manager:allow-write-image",
     "clipboard-manager:allow-write-text",
     "debug-tools:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "git",
+          "cmd": "git",
+          "args": [
+            "rev-parse",
+            "--git-dir"
+          ]
+        }
+      ]
+    }
   ]
 }

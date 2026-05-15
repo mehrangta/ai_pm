@@ -63,6 +63,7 @@
 	let query = $state('');
 	let projectLocationDraft = $state('');
 	let projectLocationSaving = $state(false);
+	let gitStatus = $state<'unknown' | 'checking' | 'git' | 'no-git'>('unknown');
 
 	onMount(() => {
 		void loadBoard();
@@ -83,6 +84,8 @@
 			if (!columns.some((column) => column.id === selectedColumnId)) {
 				selectedColumnId = columns[0]?.id ?? '';
 			}
+
+			void checkGitStatus(data.board.projectLocation);
 		} catch (error) {
 			if (error instanceof ApiError && error.status === 401) {
 				await goto('/login');
@@ -90,6 +93,31 @@
 			}
 
 			notice = error instanceof Error ? error.message : 'Board could not be loaded';
+		}
+	}
+
+	async function checkGitStatus(location: string) {
+		if (!location) {
+			gitStatus = 'unknown';
+			return;
+		}
+
+		gitStatus = 'checking';
+
+		try {
+			const { isTauri } = await import('@tauri-apps/api/core');
+
+			if (!isTauri()) {
+				gitStatus = 'unknown';
+				return;
+			}
+
+			const { Command } = await import('@tauri-apps/plugin-shell');
+			const command = Command.create('git', ['rev-parse', '--git-dir'], { cwd: location });
+			const output = await command.execute();
+			gitStatus = output.code === 0 ? 'git' : 'no-git';
+		} catch {
+			gitStatus = 'no-git';
 		}
 	}
 
@@ -207,6 +235,7 @@
 			await boardAction(currentBoardId(), { action: 'updateProjectLocation', projectLocation });
 			board = { ...board, projectLocation };
 			copyMessage = 'Project location saved.';
+			void checkGitStatus(projectLocation);
 		} catch (error) {
 			orderError = error instanceof Error ? error.message : 'Project location could not be saved';
 			projectLocationDraft = board.projectLocation;
@@ -905,6 +934,18 @@
 					>
 						Browse
 					</button>
+					{#if gitStatus !== 'unknown'}
+						<span
+							class="git-badge"
+							class:git-yes={gitStatus === 'git'}
+							class:git-no={gitStatus === 'no-git'}
+							class:git-checking={gitStatus === 'checking'}
+							title={gitStatus === 'git' ? 'Git repository detected' : gitStatus === 'no-git' ? 'No git repository' : 'Checking git...'}
+						>
+							<span class="git-dot" aria-hidden="true"></span>
+							{gitStatus === 'git' ? 'Git' : gitStatus === 'no-git' ? 'No git' : '...'}
+						</span>
+					{/if}
 				</div>
 			</div>
 
@@ -1204,7 +1245,7 @@
 
 	.project-location-row {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-columns: minmax(0, 1fr) auto auto;
 		gap: 8px;
 		align-items: center;
 	}
@@ -1232,6 +1273,62 @@
 
 	.browse-button {
 		min-width: 82px;
+	}
+
+	.git-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		height: 28px;
+		padding: 0 9px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 99px;
+		background: var(--surface-container-high);
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		transition: border-color 200ms ease, background 200ms ease;
+	}
+
+	.git-dot {
+		display: inline-block;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--outline);
+		transition: background 200ms ease, box-shadow 200ms ease;
+	}
+
+	.git-yes {
+		border-color: rgba(34, 197, 94, 0.5);
+		color: #4ade80;
+	}
+
+	.git-yes .git-dot {
+		background: #22c55e;
+		box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+	}
+
+	.git-no {
+		border-color: rgba(239, 68, 68, 0.35);
+		color: #f87171;
+	}
+
+	.git-no .git-dot {
+		background: #ef4444;
+		box-shadow: 0 0 4px rgba(239, 68, 68, 0.4);
+	}
+
+	.git-checking {
+		color: var(--on-surface-variant);
+	}
+
+	.git-checking .git-dot {
+		animation: pulse 1s infinite;
 	}
 
 	.field-label,
