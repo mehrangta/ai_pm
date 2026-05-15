@@ -67,6 +67,8 @@ export class ApiError extends Error {
 const baseUrl = () => (env.PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 const apiUrl = (path: string) => `${baseUrl()}${path}`;
 
+const appOrigin = () => (typeof window === 'undefined' ? 'server' : window.location.origin);
+
 const readJson = async <T>(response: Response, path: string) => {
 	const contentType = response.headers.get('content-type') ?? '';
 
@@ -85,9 +87,11 @@ const readJson = async <T>(response: Response, path: string) => {
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}) {
 	let response: Response;
+	const url = apiUrl(path);
+	const method = init.method ?? 'GET';
 
 	try {
-		response = await fetch(apiUrl(path), {
+		response = await fetch(url, {
 			credentials: 'include',
 			...init,
 			headers: {
@@ -98,8 +102,16 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
 		});
 	} catch (error) {
 		if (error instanceof TypeError) {
+			console.error('API fetch failed', {
+				method,
+				path,
+				url,
+				origin: appOrigin(),
+				message: error.message
+			});
+
 			throw new ApiError(
-				'API is unreachable. Set PUBLIC_API_BASE_URL to the deployed Cloudflare Worker URL, rebuild the desktop app, and make sure the Worker is deployed.',
+				`API is unreachable for ${method} ${url} from ${appOrigin()}: ${error.message}`,
 				0
 			);
 		}

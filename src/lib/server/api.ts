@@ -38,7 +38,9 @@ export const optionsResponse = (event: RequestEvent) =>
 		status: 204,
 		headers: mergeHeaders(corsHeaders(event.request), {
 			'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-			'access-control-allow-headers': 'content-type'
+			'access-control-allow-headers':
+				event.request.headers.get('access-control-request-headers') ?? 'content-type',
+			'access-control-max-age': '600'
 		})
 	});
 
