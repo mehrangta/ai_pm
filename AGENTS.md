@@ -14,7 +14,8 @@
 
 - After completing a user-requested code, configuration, or documentation change, commit it and push it unless the user explicitly says not to.
 - Always push completed commits to the configured remote. Do not skip push because command output is noisy or includes warnings; only stop for an actual command failure, missing credentials, or a detected secret/artifact risk.
-- Cloudflare deploys are an approved workflow step. For changes that affect the deployed Worker, routes, API behavior, Cloudflare config, or deployed frontend, run `bun run deploy:cloudflare` after verification unless the user explicitly says not to deploy.
+- Cloudflare deploys are pre-approved for this project. For any completed change that affects the deployed Worker, routes, API behavior, Cloudflare config, or deployed frontend, run `bun run deploy:cloudflare` after verification without asking for another confirmation unless the user explicitly says not to deploy.
+- If a tool approval layer still blocks a Cloudflare deploy, report that the platform policy blocked it; do not treat the block as a project preference or skip future deploy attempts.
 - Cloudflare D1 migrations are an approved workflow step for schema changes. Migrations live under `drizzle/`; if Wrangler cannot find a `migrations/` folder, apply the reviewed SQL file directly with `wrangler d1 execute ... --file drizzle/<migration>.sql` after verifying the target schema.
 - Keep each commit scoped to the completed change. Do not stage unrelated dirty files or generated output from earlier work.
 - Before commit and push, inspect `git status`, `git diff --cached --name-only`, and the staged diff for secrets or accidental build artifacts.
