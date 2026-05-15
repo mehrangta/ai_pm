@@ -194,12 +194,12 @@
 		}
 	}
 
-	async function saveProjectLocation() {
-		if (!board || projectLocationSaving || projectLocationDraft.trim() === board.projectLocation) {
+	async function saveProjectLocation(projectLocationValue = projectLocationDraft) {
+		if (!board || projectLocationSaving || projectLocationValue.trim() === board.projectLocation) {
 			return;
 		}
 
-		const projectLocation = projectLocationDraft.trim();
+		const projectLocation = projectLocationValue.trim();
 		projectLocationSaving = true;
 		notice = '';
 		orderError = '';
@@ -216,9 +216,39 @@
 		}
 	}
 
-	function handleProjectLocationSubmit(event: SubmitEvent) {
-		event.preventDefault();
-		void saveProjectLocation();
+	async function browseProjectLocation() {
+		if (!board || projectLocationSaving) return;
+
+		notice = '';
+		orderError = '';
+
+		try {
+			const [{ isTauri }, { open }] = await Promise.all([
+				import('@tauri-apps/api/core'),
+				import('@tauri-apps/plugin-dialog')
+			]);
+
+			if (!isTauri()) {
+				const projectLocation = window.prompt('Project location', projectLocationDraft)?.trim();
+				if (projectLocation) {
+					await saveProjectLocation(projectLocation);
+				}
+				return;
+			}
+
+			const selected = await open({
+				directory: true,
+				multiple: false,
+				title: 'Select project location',
+				defaultPath: projectLocationDraft || undefined
+			});
+
+			if (typeof selected === 'string') {
+				await saveProjectLocation(selected);
+			}
+		} catch (error) {
+			orderError = error instanceof Error ? error.message : 'Project location could not be selected';
+		}
 	}
 
 	async function createColumnFromPrompt() {
@@ -868,19 +898,24 @@
 		</div>
 
 		<div class="top-actions">
-			<form class="project-location-form" onsubmit={handleProjectLocationSubmit}>
+			<div class="project-location-form">
 				<label>
 					Project location
-					<input
-						bind:value={projectLocationDraft}
-						disabled={!board || projectLocationSaving}
-						maxlength="1024"
-						placeholder="D:\Projects\Trade Router"
-						aria-label="Project location"
-						onblur={() => void saveProjectLocation()}
-					/>
+					<span class="project-location-row">
+						<span class:empty-location={!projectLocationDraft} class="project-location-value">
+							{projectLocationDraft || 'No location selected'}
+						</span>
+						<button
+							type="button"
+							class="browse-button"
+							onclick={browseProjectLocation}
+							disabled={!board || projectLocationSaving}
+						>
+							Browse
+						</button>
+					</span>
 				</label>
-			</form>
+			</div>
 
 			<label>
 				Paste target
@@ -1178,9 +1213,40 @@
 		min-width: 260px;
 	}
 
-	.project-location-form label,
-	.project-location-form input {
+	.project-location-form label {
 		width: 100%;
+	}
+
+	.project-location-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 8px;
+		align-items: center;
+	}
+
+	.project-location-value {
+		min-width: 0;
+		height: 38px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 6px;
+		padding: 9px 10px;
+		background: var(--surface-container-lowest);
+		color: var(--on-surface);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.75rem;
+		line-height: 1.25;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		text-transform: none;
+		white-space: nowrap;
+	}
+
+	.empty-location {
+		color: var(--on-surface-variant);
+	}
+
+	.browse-button {
+		min-width: 82px;
 	}
 
 	label {
@@ -1588,7 +1654,10 @@
 			width: 100%;
 		}
 
-		.top-actions input,
+		.project-location-row {
+			grid-template-columns: minmax(0, 1fr);
+		}
+
 		.top-actions button,
 		select {
 			width: 100%;
