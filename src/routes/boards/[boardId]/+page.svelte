@@ -898,23 +898,21 @@
 		</div>
 
 		<div class="top-actions">
-			<div class="project-location-form">
-				<label>
-					Project location
-					<span class="project-location-row">
-						<span class:empty-location={!projectLocationDraft} class="project-location-value">
-							{projectLocationDraft || 'No location selected'}
-						</span>
-						<button
-							type="button"
-							class="browse-button"
-							onclick={browseProjectLocation}
-							disabled={!board || projectLocationSaving}
-						>
-							Browse
-						</button>
+			<div class="project-location-control">
+				<span class="field-label" id="project-location-label">Project location</span>
+				<div class="project-location-row" aria-labelledby="project-location-label">
+					<span class:empty-location={!projectLocationDraft} class="project-location-value">
+						{projectLocationDraft || 'No location selected'}
 					</span>
-				</label>
+					<button
+						type="button"
+						class="browse-button"
+						onclick={browseProjectLocation}
+						disabled={!board || projectLocationSaving}
+					>
+						Browse
+					</button>
+				</div>
 			</div>
 
 			<label>
@@ -927,7 +925,7 @@
 			</label>
 
 			<form onsubmit={handleSignOut}>
-				<button class="sign-out" aria-label="Sign out" title="Sign out">Sign out</button>
+				<button type="submit" class="sign-out" aria-label="Sign out" title="Sign out">Sign out</button>
 			</form>
 		</div>
 	</header>
@@ -1208,13 +1206,11 @@
 		gap: 10px;
 	}
 
-	.project-location-form {
+	.project-location-control {
+		display: grid;
+		gap: 6px;
 		flex: 0 1 360px;
 		min-width: 260px;
-	}
-
-	.project-location-form label {
-		width: 100%;
 	}
 
 	.project-location-row {
@@ -1249,6 +1245,7 @@
 		min-width: 82px;
 	}
 
+	.field-label,
 	label {
 		display: grid;
 		gap: 6px;
