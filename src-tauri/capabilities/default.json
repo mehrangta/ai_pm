@@ -9,6 +9,7 @@
     "core:default",
     "clipboard-manager:allow-write-image",
     "clipboard-manager:allow-write-text",
+    "debug-tools:default",
     "dialog:allow-open"
   ]
 }

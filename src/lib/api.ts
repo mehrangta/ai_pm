@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/public';
+import { recordDebugLog } from '$lib/debug-tools';
 
 export type AppUser = {
 	id: string;
@@ -109,6 +110,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
 				origin: appOrigin(),
 				message: error.message
 			});
+			recordDebugLog('error', [
+				'API fetch failed',
+				{ method, path, url, origin: appOrigin(), message: error.message }
+			]);
 
 			throw new ApiError(
 				`API is unreachable for ${method} ${url} from ${appOrigin()}: ${error.message}`,
@@ -128,6 +133,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
 		} catch {
 			// Keep status text fallback.
 		}
+		recordDebugLog('error', [
+			'API request failed',
+			{ method, path, url, origin: appOrigin(), status: response.status, message }
+		]);
 
 		throw new ApiError(message, response.status);
 	}
