@@ -15,6 +15,7 @@
 - After completing a user-requested code, configuration, or documentation change, commit it and push it unless the user explicitly says not to.
 - Always push completed commits to the configured remote. Do not skip push because command output is noisy or includes warnings; only stop for an actual command failure, missing credentials, or a detected secret/artifact risk.
 - Cloudflare deploys are an approved workflow step. For changes that affect the deployed Worker, routes, API behavior, Cloudflare config, or deployed frontend, run `bun run deploy:cloudflare` after verification unless the user explicitly says not to deploy.
+- Cloudflare D1 migrations are an approved workflow step for schema changes. Migrations live under `drizzle/`; if Wrangler cannot find a `migrations/` folder, apply the reviewed SQL file directly with `wrangler d1 execute ... --file drizzle/<migration>.sql` after verifying the target schema.
 - Keep each commit scoped to the completed change. Do not stage unrelated dirty files or generated output from earlier work.
 - Before commit and push, inspect `git status`, `git diff --cached --name-only`, and the staged diff for secrets or accidental build artifacts.
 - Use concise conventional commit messages.
@@ -27,6 +28,7 @@
 
 - Do not commit `.env`, `.env.*` except intentional examples, `.wrangler/`, `.svelte-kit/`, `node_modules/`, or build output.
 - Treat Cloudflare account IDs, D1 tokens, Better Auth secrets, and local database state as confidential.
+- When debugging D1 issues, prefer schema-only checks such as `PRAGMA table_info(...)`; do not inspect production row data unless the user explicitly approves it.
 - Before public pushes, inspect staged files with `git diff --cached --name-only` and scan for secret-like values.
 - Do not revert unrelated user edits. If `AGENTS.md` or docs are already dirty, update them directly instead of resetting.
 
