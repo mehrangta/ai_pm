@@ -12,7 +12,9 @@
 
 ## Workflow
 
-- After completing a user-requested code or configuration change, commit it and push it unless the user explicitly says not to.
+- After completing a user-requested code, configuration, or documentation change, commit it and push it unless the user explicitly says not to.
+- Always push completed commits to the configured remote. Do not skip push because command output is noisy or includes warnings; only stop for an actual command failure, missing credentials, or a detected secret/artifact risk.
+- Cloudflare deploys are an approved workflow step. For changes that affect the deployed Worker, routes, API behavior, Cloudflare config, or deployed frontend, run `bun run deploy:cloudflare` after verification unless the user explicitly says not to deploy.
 - Keep each commit scoped to the completed change. Do not stage unrelated dirty files or generated output from earlier work.
 - Before commit and push, inspect `git status`, `git diff --cached --name-only`, and the staged diff for secrets or accidental build artifacts.
 - Use concise conventional commit messages.
