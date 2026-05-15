@@ -122,7 +122,7 @@
 			}
 
 			const { Command } = await import('@tauri-apps/plugin-shell');
-			const command = Command.create('git', ['rev-parse', '--git-dir'], { cwd: location });
+			const command = Command.create('cmd', ['/c', 'git', 'rev-parse', '--git-dir'], { cwd: location });
 			const output = await command.execute();
 			gitStatus = output.code === 0 ? 'git' : 'no-git';
 		} catch {
@@ -977,7 +977,7 @@
 			for (const tool of ['git', 'codex', 'gh'] as const) {
 				deviceTools = { ...deviceTools, [tool]: 'checking' };
 				try {
-					const output = await Command.create(tool, ['--version']).execute();
+					const output = await Command.create('cmd', ['/c', tool, '--version']).execute();
 					deviceTools = { ...deviceTools, [tool]: output.code === 0 ? 'installed' : 'missing' };
 				} catch {
 					deviceTools = { ...deviceTools, [tool]: 'missing' };
@@ -1029,7 +1029,7 @@
 	async function execInProject(cmd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
 		const { Command } = await import('@tauri-apps/plugin-shell');
 		const cwd = board?.projectLocation;
-		const command = Command.create(cmd, args, cwd ? { cwd } : undefined);
+		const command = Command.create('cmd', ['/c', cmd, ...args], cwd ? { cwd } : undefined);
 		const result = await command.execute();
 		return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr };
 	}
