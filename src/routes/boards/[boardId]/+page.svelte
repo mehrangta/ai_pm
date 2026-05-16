@@ -1041,6 +1041,16 @@
 		return [cmd, ...args].map(quoteCommandPart).join(' ');
 	}
 
+	function quoteBatchArg(part: string) {
+		return `"${part.replace(/%/g, '%%').replace(/"/g, '""')}"`;
+	}
+
+	function formatBatchCommand(cmd: string, args: string[], stdinFile = '') {
+		const command = [cmd, ...args.map(quoteBatchArg)].join(' ');
+
+		return stdinFile ? `${command} < ${quoteBatchArg(stdinFile)}` : command;
+	}
+
 	function appendCommandOutput(stream: 'stdout' | 'stderr', value: string) {
 		const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 		if (!normalized.trim()) return;
@@ -1069,6 +1079,17 @@
 		return `${tmp}${fileName}`;
 	}
 
+	async function saveTextToTempFile(text: string, prefix: string, ext = 'txt'): Promise<string> {
+		const fileName = `${prefix}-${Date.now()}.${ext}`;
+		const { writeTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs');
+		await writeTextFile(fileName, text, { baseDir: BaseDirectory.Temp });
+
+		const { tempDir } = await import('@tauri-apps/api/path');
+		const tmp = await tempDir();
+
+		return `${tmp}${fileName}`;
+	}
+
 	async function cleanupTempFile(path: string) {
 		if (!path) return;
 		try {
@@ -1083,13 +1104,27 @@
 	async function execInProject(
 		cmd: string,
 		args: string[],
-		options: { log?: boolean } = {}
+		options: { log?: boolean; stdinFile?: string } = {}
 	): Promise<{ code: number; stdout: string; stderr: string }> {
 		const { Command } = await import('@tauri-apps/plugin-shell');
 		const cwd = board?.projectLocation;
+		let scriptPath = '';
+
+		if (cmd === 'codex' && options.log && options.stdinFile) {
+			scriptPath = await saveTextToTempFile(
+				`@echo off\r\n${formatBatchCommand('codex.cmd', args, options.stdinFile)}\r\nexit /b %ERRORLEVEL%\r\n`,
+				'codex-run',
+				'cmd'
+			);
+		}
+
 		const command =
 			cmd === 'codex' && options.log
-				? Command.create('cmd', ['/c', 'codex.cmd', ...args], cwd ? { cwd } : undefined)
+				? Command.create(
+						'cmd',
+						scriptPath ? ['/d', '/c', scriptPath] : ['/c', 'codex.cmd', ...args],
+						cwd ? { cwd } : undefined
+					)
 				: Command.create('cmd', ['/c', cmd, ...args], cwd ? { cwd } : undefined);
 
 		if (options.log) {
@@ -1121,6 +1156,8 @@
 				const message = error instanceof Error ? error.message : String(error);
 				appendApplyLog(`[error] ${message}`);
 				return { code: 1, stdout, stderr: message };
+			} finally {
+				await cleanupTempFile(scriptPath);
 			}
 		}
 
@@ -1148,6 +1185,7 @@
 		const branchName = `feat/${slug}`;
 		const commitMsg = card.description.slice(0, 72);
 		let imagePath = '';
+		let promptPath = '';
 		let originalBranch = 'main';
 		let createdBranch = false;
 		let pushedBranch = false;
@@ -1195,6 +1233,7 @@
 
 			// 3. Run codex exec
 			setApplyStep('Running Codex...');
+			promptPath = await saveTextToTempFile(card.description, 'codex-prompt');
 			const codexArgs = [
 				'--ask-for-approval',
 				'never',
@@ -1208,8 +1247,11 @@
 			if (imagePath) {
 				codexArgs.push('--image', imagePath);
 			}
-			codexArgs.push(card.description);
-			const codexResult = await execInProject('codex', codexArgs, { log: true });
+			codexArgs.push('-');
+			const codexResult = await execInProject('codex', codexArgs, {
+				log: true,
+				stdinFile: promptPath
+			});
 			if (codexResult.code !== 0) {
 				throw new Error(`Codex failed: ${codexResult.stderr || codexResult.stdout}`);
 			}
@@ -1318,6 +1360,7 @@
 			}
 		} finally {
 			await cleanupTempFile(imagePath);
+			await cleanupTempFile(promptPath);
 			appendApplyLog(`[end] ${new Date().toLocaleString()}`);
 			applyingCardId = '';
 			applyProgress = '';
