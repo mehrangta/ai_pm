@@ -1201,7 +1201,7 @@
 			if (imagePath) {
 				codexArgs.push('--image', imagePath);
 			}
-			codexArgs.push('--', card.description);
+			codexArgs.push(card.description);
 			const codexResult = await execInProject('codex', codexArgs, { log: true });
 			if (codexResult.code !== 0) {
 				throw new Error(`Codex failed: ${codexResult.stderr || codexResult.stdout}`);
