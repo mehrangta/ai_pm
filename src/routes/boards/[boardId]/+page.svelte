@@ -1076,9 +1076,9 @@
 
 			// 3. Run codex exec
 			applyProgress = 'Running Codex...';
-			const codexArgs = ['exec', card.description, '--cd', board.projectLocation, '--sandbox', 'workspace-write', '-a', 'never'];
+			const codexArgs = ['exec', card.description, '--cd', board.projectLocation, '--sandbox', 'workspace-write', '--ask-for-approval', 'never'];
 			if (imagePath) {
-				codexArgs.splice(2, 0, '-i', imagePath);
+				codexArgs.splice(2, 0, '--image', imagePath);
 			}
 			const codexResult = await execInProject('codex', codexArgs);
 			if (codexResult.code !== 0) {
@@ -1133,8 +1133,10 @@
 		} catch (error) {
 			orderError = error instanceof Error ? error.message : 'Apply failed.';
 
-			// Try to switch back to main on failure
+			// Revert: discard changes, switch back, delete branch
 			try {
+				await execInProject('git', ['checkout', '.']);
+				await execInProject('git', ['clean', '-fd']);
 				await execInProject('git', ['checkout', 'main']);
 				await execInProject('git', ['branch', '-D', branchName]);
 			} catch {
