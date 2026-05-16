@@ -1363,17 +1363,15 @@
 		</div>
 	{/if}
 
-	{#if applyLogEntries.length}
-		<section class="apply-log-panel" aria-live="polite" aria-label="Apply log">
-			<header>
-				<span>Apply log</span>
-				<span class:log-running={applyLogStatus === 'running'} class:log-failed={applyLogStatus === 'failed'} class:log-succeeded={applyLogStatus === 'succeeded'}>
-					{applyLogStatus}
-				</span>
-			</header>
-			<pre>{applyLogText}</pre>
-		</section>
-	{/if}
+	<section class="apply-log-panel" class:log-empty={!applyLogEntries.length} aria-live="polite" aria-label="Apply log">
+		<header>
+			<span>Apply log</span>
+			<span class:log-running={applyLogStatus === 'running'} class:log-failed={applyLogStatus === 'failed'} class:log-succeeded={applyLogStatus === 'succeeded'}>
+				{applyLogStatus}
+			</span>
+		</header>
+		<pre>{applyLogText || 'Waiting for Apply.'}</pre>
+	</section>
 
 	<div class="board-shell">
 		<div class="board-track">
@@ -1956,6 +1954,11 @@
 		line-height: 1.45;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+	}
+
+	.apply-log-panel.log-empty pre {
+		max-height: 44px;
+		color: var(--outline);
 	}
 
 	.board-shell {
