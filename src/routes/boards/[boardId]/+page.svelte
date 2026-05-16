@@ -45,6 +45,7 @@
 	const pendingUploadEditGraceMs = 1_500;
 	const pendingUploadSyncAttempts = 6;
 	const pendingUploadSyncDelayMs = 500;
+	const applyTargetStorageKeyPrefix = 'ai-pm:apply-target-column:';
 	const orderSaveState: Record<OrderAction, OrderSaveState> = {
 		reorderColumns: { inFlight: false, pending: null },
 		moveCards: { inFlight: false, pending: null }
@@ -93,6 +94,11 @@
 				selectedColumnId = columns[0]?.id ?? '';
 			}
 
+			const savedApplyTargetColumnId = readApplyTargetColumnId(data.board.id);
+			applyTargetColumnId = columns.some((column) => column.id === savedApplyTargetColumnId)
+				? savedApplyTargetColumnId
+				: (columns[0]?.id ?? '');
+
 			void checkGitStatus(data.board.projectLocation);
 			void checkDeviceTools();
 		} catch (error) {
@@ -128,6 +134,29 @@
 		} catch {
 			gitStatus = 'no-git';
 		}
+	}
+
+	function readApplyTargetColumnId(boardId: string) {
+		if (typeof localStorage === 'undefined') return '';
+
+		return localStorage.getItem(`${applyTargetStorageKeyPrefix}${boardId}`) ?? '';
+	}
+
+	function saveApplyTargetColumnId(columnId: string) {
+		if (typeof localStorage === 'undefined') return;
+
+		localStorage.setItem(`${applyTargetStorageKeyPrefix}${currentBoardId()}`, columnId);
+	}
+
+	function cardOrderPayload() {
+		return {
+			columns: columns.map((column) => ({
+				id: column.id,
+				cardIds: column.cards
+					.filter((card) => !isShadowCard(card) && !isPendingCard(card))
+					.map((card) => card.id)
+			}))
+		};
 	}
 
 	function handleColumnConsider(event: CustomEvent<{ items: BoardColumn[] }>) {
@@ -176,14 +205,7 @@
 		if (isSearchActive()) return;
 
 		handleCardConsider(columnId, event);
-		persistOrder('moveCards', {
-			columns: columns.map((column) => ({
-				id: column.id,
-				cardIds: column.cards
-					.filter((card) => !isShadowCard(card) && !isPendingCard(card))
-					.map((card) => card.id)
-			}))
-		});
+		persistOrder('moveCards', cardOrderPayload());
 	}
 
 	function persistOrder(action: OrderAction, fields: Record<string, unknown>) {
@@ -1076,10 +1098,19 @@
 
 			// 3. Run codex exec
 			applyProgress = 'Running Codex...';
-			const codexArgs = ['exec', card.description, '--cd', board.projectLocation, '--sandbox', 'workspace-write', '--ask-for-approval', 'never'];
+			const codexArgs = [
+				'--ask-for-approval',
+				'never',
+				'exec',
+				'--cd',
+				board.projectLocation,
+				'--sandbox',
+				'workspace-write'
+			];
 			if (imagePath) {
-				codexArgs.splice(2, 0, '--image', imagePath);
+				codexArgs.push('--image', imagePath);
 			}
+			codexArgs.push('--', card.description);
 			const codexResult = await execInProject('codex', codexArgs);
 			if (codexResult.code !== 0) {
 				throw new Error(`Codex failed: ${codexResult.stderr || codexResult.stdout}`);
@@ -1122,9 +1153,12 @@
 						sourceColumn.cards = sourceColumn.cards.filter((c) => c.id !== card.id);
 						targetColumn.cards = [...targetColumn.cards, { ...card, columnId: applyTargetColumnId }];
 						columns = [...columns];
-						persistOrder('moveCards', {
-							columns: columns.map((c) => ({ id: c.id, cardIds: c.cards.map((cd) => cd.id) }))
-						});
+						try {
+							await boardAction(currentBoardId(), { action: 'moveCards', ...cardOrderPayload() });
+						} catch {
+							orderError = 'Applied, but the card move to the apply target could not be saved.';
+							await loadBoard();
+						}
 					}
 				}
 			}
@@ -1209,7 +1243,7 @@
 
 			<label>
 				Apply target
-				<select bind:value={applyTargetColumnId} disabled={!columns.length}>
+				<select bind:value={applyTargetColumnId} disabled={!columns.length} onchange={() => saveApplyTargetColumnId(applyTargetColumnId)}>
 					{#each columns as column (column.id)}
 						<option value={column.id}>{column.title}</option>
 					{/each}
