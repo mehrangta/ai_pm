@@ -86,6 +86,7 @@
 	let branchMessage = $state('');
 	let branchError = $state('');
 	let branchActionName = $state('');
+	let branchDeleteCandidate = $state('');
 
 	onMount(() => {
 		void loadBoard();
@@ -163,6 +164,20 @@
 			.filter((branch) => branch.name);
 	}
 
+	function isProtectedBranch(branch: GitBranch) {
+		return branch.name === 'main' || branch.name === 'master';
+	}
+
+	function branchRenameTitle(branch: GitBranch) {
+		return isProtectedBranch(branch) ? 'main/master branches cannot be renamed' : 'Rename local branch';
+	}
+
+	function branchDeleteTitle(branch: GitBranch) {
+		if (isProtectedBranch(branch)) return 'main/master branches cannot be deleted';
+		if (branch.current) return 'Switch to another branch before deleting this one';
+		return 'Delete local branch';
+	}
+
 	async function loadBranches() {
 		branchError = '';
 
@@ -180,6 +195,7 @@
 			}
 
 			branches = parseGitBranches(result.stdout);
+			branchDeleteCandidate = '';
 		} catch (error) {
 			branches = [];
 			branchError = error instanceof Error ? error.message : 'Branches could not be loaded.';
@@ -189,6 +205,12 @@
 	}
 
 	async function renameBranch(branch: GitBranch) {
+		if (isProtectedBranch(branch)) {
+			branchError = '';
+			branchMessage = `${branch.name} is protected and cannot be renamed.`;
+			return;
+		}
+
 		const nextName = window.prompt('Branch name', branch.name)?.trim();
 		if (!nextName || nextName === branch.name || branchActionName) return;
 
@@ -212,9 +234,24 @@
 	}
 
 	async function deleteBranch(branch: GitBranch) {
-		if (branch.current || branchActionName) return;
+		if (isProtectedBranch(branch)) {
+			branchError = '';
+			branchMessage = `${branch.name} is protected and cannot be deleted.`;
+			return;
+		}
 
-		if (!window.confirm(`Delete local branch "${branch.name}"?`)) {
+		if (branch.current) {
+			branchError = '';
+			branchMessage = 'Switch to another branch before deleting it.';
+			return;
+		}
+
+		if (branchActionName) return;
+
+		if (branchDeleteCandidate !== branch.name) {
+			branchDeleteCandidate = branch.name;
+			branchError = '';
+			branchMessage = `Press Confirm to delete ${branch.name}.`;
 			return;
 		}
 
@@ -234,6 +271,7 @@
 			branchError = error instanceof Error ? error.message : 'Branch delete failed.';
 		} finally {
 			branchActionName = '';
+			branchDeleteCandidate = '';
 		}
 	}
 
@@ -1603,22 +1641,42 @@
 							{#if branch.current}
 								<span class="current-label">Current</span>
 							{/if}
+							{#if isProtectedBranch(branch)}
+								<span class="protected-label">Protected</span>
+							{/if}
 							<button
 								type="button"
 								class="small-button"
 								onclick={() => renameBranch(branch)}
-								disabled={Boolean(branchActionName)}
+								disabled={isProtectedBranch(branch) || Boolean(branchActionName)}
+								title={branchRenameTitle(branch)}
 							>
 								Rename
 							</button>
+							{#if branchDeleteCandidate === branch.name && !branchActionName}
+								<button
+									type="button"
+									class="small-button"
+									onclick={() => {
+										branchDeleteCandidate = '';
+										branchMessage = '';
+									}}
+								>
+									Cancel
+								</button>
+							{/if}
 							<button
 								type="button"
 								class="small-button danger"
 								onclick={() => deleteBranch(branch)}
-								disabled={branch.current || Boolean(branchActionName)}
-								title={branch.current ? 'Switch to another branch before deleting this one' : 'Delete local branch'}
+								disabled={branch.current || isProtectedBranch(branch) || Boolean(branchActionName)}
+								title={branchDeleteTitle(branch)}
 							>
-								Delete
+								{branchActionName === branch.name
+									? 'Deleting...'
+									: branchDeleteCandidate === branch.name
+										? 'Confirm'
+										: 'Delete'}
 							</button>
 						</span>
 					</div>
@@ -2293,6 +2351,11 @@
 		min-width: 0;
 	}
 
+	.branch-actions {
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+
 	.branch-name {
 		color: var(--on-surface);
 		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -2302,12 +2365,17 @@
 		white-space: nowrap;
 	}
 
-	.current-label {
+	.current-label,
+	.protected-label {
 		color: var(--tertiary);
 		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 		font-size: 0.62rem;
 		font-weight: 750;
 		text-transform: uppercase;
+	}
+
+	.protected-label {
+		color: #ffd166;
 	}
 
 	.branch-empty {
