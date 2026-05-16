@@ -73,6 +73,9 @@
 	let applyTargetColumnId = $state('');
 	let applyingCardId = $state('');
 	let applyProgress = $state('');
+	let applyLogEntries = $state<string[]>([]);
+	let applyLogStatus = $state<'idle' | 'running' | 'succeeded' | 'failed'>('idle');
+	let applyLogText = $derived(applyLogEntries.join('\n'));
 
 	onMount(() => {
 		void loadBoard();
@@ -1018,6 +1021,35 @@
 			.slice(0, 48);
 	}
 
+	function appendApplyLog(message: string) {
+		const normalized = message.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
+		if (!normalized) return;
+
+		applyLogEntries = [...applyLogEntries, ...normalized.split('\n')];
+	}
+
+	function setApplyStep(message: string) {
+		applyProgress = message;
+		appendApplyLog(`[step] ${message.replace(/\.+$/, '')}`);
+	}
+
+	function quoteCommandPart(part: string) {
+		return /[\s"]/u.test(part) ? JSON.stringify(part) : part;
+	}
+
+	function formatCommand(cmd: string, args: string[]) {
+		return [cmd, ...args].map(quoteCommandPart).join(' ');
+	}
+
+	function appendCommandOutput(stream: 'stdout' | 'stderr', value: string) {
+		const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+		if (!normalized.trim()) return;
+
+		for (const line of normalized.trimEnd().split('\n')) {
+			appendApplyLog(`[${stream}] ${line}`);
+		}
+	}
+
 	async function saveImageToTempFile(card: BoardCard): Promise<string> {
 		if (!card.image) return '';
 
@@ -1048,10 +1080,47 @@
 		}
 	}
 
-	async function execInProject(cmd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+	async function execInProject(
+		cmd: string,
+		args: string[],
+		options: { log?: boolean } = {}
+	): Promise<{ code: number; stdout: string; stderr: string }> {
 		const { Command } = await import('@tauri-apps/plugin-shell');
 		const cwd = board?.projectLocation;
 		const command = Command.create('cmd', ['/c', cmd, ...args], cwd ? { cwd } : undefined);
+
+		if (options.log) {
+			let stdout = '';
+			let stderr = '';
+
+			appendApplyLog(`$ ${formatCommand(cmd, args)}`);
+
+			const closePromise = new Promise<{ code: number | null; signal: number | null }>((resolve, reject) => {
+				command.on('close', resolve);
+				command.on('error', reject);
+				command.stdout.on('data', (data) => {
+					stdout += data;
+					appendCommandOutput('stdout', data);
+				});
+				command.stderr.on('data', (data) => {
+					stderr += data;
+					appendCommandOutput('stderr', data);
+				});
+			});
+
+			try {
+				await command.spawn();
+				const result = await closePromise;
+				const code = result.code ?? 1;
+				appendApplyLog(`[exit] ${code}`);
+				return { code, stdout, stderr };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				appendApplyLog(`[error] ${message}`);
+				return { code: 1, stdout, stderr: message };
+			}
+		}
+
 		const result = await command.execute();
 		return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr };
 	}
@@ -1079,25 +1148,30 @@
 
 		applyingCardId = card.id;
 		applyProgress = '';
+		applyLogEntries = [];
+		applyLogStatus = 'running';
 		orderError = '';
 		copyMessage = '';
+		appendApplyLog(`[start] ${new Date().toLocaleString()}`);
+		appendApplyLog(`[branch] ${branchName}`);
 
 		try {
 			// 1. Save image temp file if needed
 			if (card.image) {
-				applyProgress = 'Saving image...';
+				setApplyStep('Saving image...');
 				imagePath = await saveImageToTempFile(card);
+				appendApplyLog(`[image] ${imagePath}`);
 			}
 
 			// 2. Create feature branch
-			applyProgress = 'Creating branch...';
-			const branchResult = await execInProject('git', ['checkout', '-b', branchName]);
+			setApplyStep('Creating branch...');
+			const branchResult = await execInProject('git', ['checkout', '-b', branchName], { log: true });
 			if (branchResult.code !== 0) {
 				throw new Error(`Branch creation failed: ${branchResult.stderr}`);
 			}
 
 			// 3. Run codex exec
-			applyProgress = 'Running Codex...';
+			setApplyStep('Running Codex...');
 			const codexArgs = [
 				'--ask-for-approval',
 				'never',
@@ -1111,41 +1185,47 @@
 				codexArgs.push('--image', imagePath);
 			}
 			codexArgs.push('--', card.description);
-			const codexResult = await execInProject('codex', codexArgs);
+			const codexResult = await execInProject('codex', codexArgs, { log: true });
 			if (codexResult.code !== 0) {
 				throw new Error(`Codex failed: ${codexResult.stderr || codexResult.stdout}`);
 			}
 
 			// 4. Stage and commit
-			applyProgress = 'Committing...';
-			await execInProject('git', ['add', '-A']);
-			const commitResult = await execInProject('git', ['commit', '-m', `feat: ${commitMsg}`]);
+			setApplyStep('Committing...');
+			await execInProject('git', ['add', '-A'], { log: true });
+			const commitResult = await execInProject('git', ['commit', '-m', `feat: ${commitMsg}`], {
+				log: true
+			});
 			if (commitResult.code !== 0 && !commitResult.stdout.includes('nothing to commit')) {
 				throw new Error(`Commit failed: ${commitResult.stderr}`);
 			}
 
 			// 5. Push branch
-			applyProgress = 'Pushing...';
-			const pushResult = await execInProject('git', ['push', '-u', 'origin', branchName]);
+			setApplyStep('Pushing...');
+			const pushResult = await execInProject('git', ['push', '-u', 'origin', branchName], { log: true });
 			if (pushResult.code !== 0) {
 				throw new Error(`Push failed: ${pushResult.stderr}`);
 			}
 
 			// 6. Create PR (if gh is available)
 			if (deviceTools.gh === 'installed') {
-				applyProgress = 'Creating PR...';
+				setApplyStep('Creating PR...');
 				await execInProject('gh', [
 					'pr', 'create', '--base', 'main', '--head', branchName,
 					'--title', `feat: ${commitMsg}`,
 					'--body', card.description
-				]);
+				], { log: true });
+			} else {
+				appendApplyLog('[skip] gh CLI not installed; PR creation skipped');
 			}
 
 			// 7. Switch back to main
-			await execInProject('git', ['checkout', 'main']);
+			setApplyStep('Switching back to main...');
+			await execInProject('git', ['checkout', 'main'], { log: true });
 
 			// 8. Move card to apply target column
 			if (applyTargetColumnId && applyTargetColumnId !== card.columnId) {
+				setApplyStep('Moving card to apply target...');
 				const targetColumn = columns.find((c) => c.id === applyTargetColumnId);
 				if (targetColumn) {
 					const sourceColumn = columns.find((c) => c.id === card.columnId);
@@ -1155,29 +1235,40 @@
 						columns = [...columns];
 						try {
 							await boardAction(currentBoardId(), { action: 'moveCards', ...cardOrderPayload() });
+							appendApplyLog(`[move] card saved to "${targetColumn.title}"`);
 						} catch {
 							orderError = 'Applied, but the card move to the apply target could not be saved.';
+							appendApplyLog(`[error] ${orderError}`);
 							await loadBoard();
 						}
 					}
 				}
+			} else {
+				appendApplyLog('[skip] apply target matches source column');
 			}
 
 			copyMessage = `Applied! ${deviceTools.gh === 'installed' ? 'PR created.' : 'Branch pushed (install gh CLI for auto PR).'}`;
+			applyLogStatus = 'succeeded';
+			appendApplyLog(`[done] ${copyMessage}`);
 		} catch (error) {
 			orderError = error instanceof Error ? error.message : 'Apply failed.';
+			applyLogStatus = 'failed';
+			appendApplyLog(`[error] ${orderError}`);
 
 			// Revert: discard changes, switch back, delete branch
 			try {
-				await execInProject('git', ['checkout', '.']);
-				await execInProject('git', ['clean', '-fd']);
-				await execInProject('git', ['checkout', 'main']);
-				await execInProject('git', ['branch', '-D', branchName]);
+				setApplyStep('Cleaning failed apply...');
+				await execInProject('git', ['checkout', '.'], { log: true });
+				await execInProject('git', ['clean', '-fd'], { log: true });
+				await execInProject('git', ['checkout', 'main'], { log: true });
+				await execInProject('git', ['branch', '-D', branchName], { log: true });
 			} catch {
 				// Best-effort cleanup.
+				appendApplyLog('[error] cleanup failed');
 			}
 		} finally {
 			await cleanupTempFile(imagePath);
+			appendApplyLog(`[end] ${new Date().toLocaleString()}`);
 			applyingCardId = '';
 			applyProgress = '';
 		}
@@ -1270,6 +1361,18 @@
 		<div class:error-state={notice || pasteError || orderError} class="notice">
 			{notice || pasteError || orderError || copyMessage}
 		</div>
+	{/if}
+
+	{#if applyLogEntries.length}
+		<section class="apply-log-panel" aria-live="polite" aria-label="Apply log">
+			<header>
+				<span>Apply log</span>
+				<span class:log-running={applyLogStatus === 'running'} class:log-failed={applyLogStatus === 'failed'} class:log-succeeded={applyLogStatus === 'succeeded'}>
+					{applyLogStatus}
+				</span>
+			</header>
+			<pre>{applyLogText}</pre>
+		</section>
 	{/if}
 
 	<div class="board-shell">
@@ -1798,6 +1901,61 @@
 		border-color: rgba(255, 180, 171, 0.65);
 		background: rgba(72, 0, 5, 0.72);
 		color: var(--error);
+	}
+
+	.apply-log-panel {
+		display: grid;
+		gap: 8px;
+		margin: 12px 18px 0;
+		border: 1px solid var(--outline-variant);
+		border-radius: 8px;
+		background: var(--surface-container-lowest);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+		overflow: hidden;
+	}
+
+	.apply-log-panel header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 10px 12px;
+		border-bottom: 1px solid var(--outline-variant);
+		background: var(--surface-container-low);
+		color: var(--on-surface);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.68rem;
+		font-weight: 750;
+		text-transform: uppercase;
+	}
+
+	.apply-log-panel header span:last-child {
+		color: var(--on-surface-variant);
+	}
+
+	.apply-log-panel header .log-running {
+		color: var(--tertiary);
+	}
+
+	.apply-log-panel header .log-succeeded {
+		color: #4ade80;
+	}
+
+	.apply-log-panel header .log-failed {
+		color: var(--error);
+	}
+
+	.apply-log-panel pre {
+		max-height: 280px;
+		margin: 0;
+		padding: 12px;
+		overflow: auto;
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.72rem;
+		line-height: 1.45;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 
 	.board-shell {
