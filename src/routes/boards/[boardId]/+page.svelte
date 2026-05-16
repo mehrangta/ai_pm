@@ -1101,7 +1101,7 @@
 		const cwd = board?.projectLocation;
 		const commandArgs =
 			cmd === 'codex' && options.log
-				? ['/d', '/s', '/c', `${formatCmdShellCommand(cmd, args)} < NUL`]
+				? ['/d', '/c', `${formatCmdShellCommand(cmd, args)} < NUL`]
 				: ['/c', cmd, ...args];
 		const command = Command.create('cmd', commandArgs, cwd ? { cwd } : undefined);
 
@@ -1161,6 +1161,9 @@
 		const branchName = `feat/${slug}`;
 		const commitMsg = card.description.slice(0, 72);
 		let imagePath = '';
+		let originalBranch = 'main';
+		let createdBranch = false;
+		let pushedBranch = false;
 
 		applyingCardId = card.id;
 		applyProgress = '';
@@ -1172,6 +1175,22 @@
 		appendApplyLog(`[branch] ${branchName}`);
 
 		try {
+			const currentBranchResult = await execInProject('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+				log: true
+			});
+			if (currentBranchResult.code === 0 && currentBranchResult.stdout.trim()) {
+				originalBranch = currentBranchResult.stdout.trim();
+			}
+
+			const statusResult = await execInProject('git', ['status', '--porcelain'], { log: true });
+			if (statusResult.code !== 0) {
+				throw new Error(`Git status failed: ${statusResult.stderr}`);
+			}
+
+			if (statusResult.stdout.trim()) {
+				throw new Error('Project has uncommitted changes. Commit, stash, or clean them before Apply.');
+			}
+
 			// 1. Save image temp file if needed
 			if (card.image) {
 				setApplyStep('Saving image...');
@@ -1185,6 +1204,7 @@
 			if (branchResult.code !== 0) {
 				throw new Error(`Branch creation failed: ${branchResult.stderr}`);
 			}
+			createdBranch = true;
 
 			// 3. Run codex exec
 			setApplyStep('Running Codex...');
@@ -1223,6 +1243,7 @@
 			if (pushResult.code !== 0) {
 				throw new Error(`Push failed: ${pushResult.stderr}`);
 			}
+			pushedBranch = true;
 
 			// 6. Create PR (if gh is available)
 			if (deviceTools.gh === 'installed') {
@@ -1237,8 +1258,8 @@
 			}
 
 			// 7. Switch back to main
-			setApplyStep('Switching back to main...');
-			await execInProject('git', ['checkout', 'main'], { log: true });
+			setApplyStep(`Switching back to ${originalBranch}...`);
+			await execInProject('git', ['checkout', originalBranch], { log: true });
 
 			// 8. Move card to apply target column
 			if (applyTargetColumnId && applyTargetColumnId !== card.columnId) {
@@ -1273,15 +1294,40 @@
 			appendApplyLog(`[error] ${orderError}`);
 
 			// Revert: discard changes, switch back, delete branch
-			try {
+			if (createdBranch) {
 				setApplyStep('Cleaning failed apply...');
-				await execInProject('git', ['checkout', '.'], { log: true });
-				await execInProject('git', ['clean', '-fd'], { log: true });
-				await execInProject('git', ['checkout', 'main'], { log: true });
-				await execInProject('git', ['branch', '-D', branchName], { log: true });
-			} catch {
-				// Best-effort cleanup.
-				appendApplyLog('[error] cleanup failed');
+				const resetResult = await execInProject('git', ['reset', '--hard', 'HEAD'], { log: true });
+				if (resetResult.code !== 0) {
+					appendApplyLog(`[error] cleanup reset failed: ${resetResult.stderr}`);
+				}
+
+				const cleanResult = await execInProject('git', ['clean', '-fd'], { log: true });
+				if (cleanResult.code !== 0) {
+					appendApplyLog(`[error] cleanup clean failed: ${cleanResult.stderr}`);
+				}
+
+				const checkoutResult = await execInProject('git', ['checkout', originalBranch], { log: true });
+				if (checkoutResult.code !== 0) {
+					appendApplyLog(`[error] cleanup checkout failed: ${checkoutResult.stderr}`);
+				}
+
+				const deleteLocalResult = await execInProject('git', ['branch', '-D', branchName], { log: true });
+				if (deleteLocalResult.code !== 0) {
+					appendApplyLog(`[error] cleanup branch delete failed: ${deleteLocalResult.stderr}`);
+				}
+
+				if (pushedBranch) {
+					const deleteRemoteResult = await execInProject(
+						'git',
+						['push', 'origin', '--delete', branchName],
+						{ log: true }
+					);
+					if (deleteRemoteResult.code !== 0) {
+						appendApplyLog(`[error] cleanup remote branch delete failed: ${deleteRemoteResult.stderr}`);
+					}
+				}
+			} else {
+				appendApplyLog('[cleanup] no apply branch was created');
 			}
 		} finally {
 			await cleanupTempFile(imagePath);
