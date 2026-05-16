@@ -1095,6 +1095,16 @@
 
 			appendApplyLog(`$ ${formatCommand(cmd, args)}`);
 
+			if (cmd === 'codex') {
+				const result = await command.execute();
+				stdout = result.stdout;
+				stderr = result.stderr;
+				appendCommandOutput('stdout', stdout);
+				appendCommandOutput('stderr', stderr);
+				appendApplyLog(`[exit] ${result.code ?? 1}`);
+				return { code: result.code ?? 1, stdout, stderr };
+			}
+
 			const closePromise = new Promise<{ code: number | null; signal: number | null }>((resolve, reject) => {
 				command.on('close', resolve);
 				command.on('error', reject);
