@@ -40,6 +40,11 @@
 		syncPromise: Promise<void> | null;
 	};
 
+	type GitBranch = {
+		name: string;
+		current: boolean;
+	};
+
 	const flipDurationMs = 160;
 	const maxImageBytes = 1_500_000;
 	const pendingUploadEditGraceMs = 1_500;
@@ -76,6 +81,11 @@
 	let applyLogEntries = $state<string[]>([]);
 	let applyLogStatus = $state<'idle' | 'running' | 'succeeded' | 'failed'>('idle');
 	let applyLogText = $derived(applyLogEntries.join('\n'));
+	let branches = $state<GitBranch[]>([]);
+	let branchesLoading = $state(false);
+	let branchMessage = $state('');
+	let branchError = $state('');
+	let branchActionName = $state('');
 
 	onMount(() => {
 		void loadBoard();
@@ -104,6 +114,7 @@
 
 			void checkGitStatus(data.board.projectLocation);
 			void checkDeviceTools();
+			void loadBranches();
 		} catch (error) {
 			if (error instanceof ApiError && error.status === 401) {
 				await goto('/login');
@@ -136,6 +147,93 @@
 			gitStatus = output.code === 0 ? 'git' : 'no-git';
 		} catch {
 			gitStatus = 'no-git';
+		}
+	}
+
+	function parseGitBranches(output: string) {
+		return output
+			.split('\n')
+			.map((line) => {
+				const normalized = line.trimEnd();
+				return {
+					name: normalized.slice(2).trim(),
+					current: normalized.startsWith('*')
+				};
+			})
+			.filter((branch) => branch.name);
+	}
+
+	async function loadBranches() {
+		branchError = '';
+
+		if (!board?.projectLocation || gitStatus === 'no-git') {
+			branches = [];
+			return;
+		}
+
+		branchesLoading = true;
+
+		try {
+			const result = await execInProject('git', ['branch', '--list']);
+			if (result.code !== 0) {
+				throw new Error(result.stderr || 'Branches could not be loaded.');
+			}
+
+			branches = parseGitBranches(result.stdout);
+		} catch (error) {
+			branches = [];
+			branchError = error instanceof Error ? error.message : 'Branches could not be loaded.';
+		} finally {
+			branchesLoading = false;
+		}
+	}
+
+	async function renameBranch(branch: GitBranch) {
+		const nextName = window.prompt('Branch name', branch.name)?.trim();
+		if (!nextName || nextName === branch.name || branchActionName) return;
+
+		branchActionName = branch.name;
+		branchError = '';
+		branchMessage = '';
+
+		try {
+			const result = await execInProject('git', ['branch', '-m', branch.name, nextName]);
+			if (result.code !== 0) {
+				throw new Error(result.stderr || 'Branch rename failed.');
+			}
+
+			branchMessage = `Renamed ${branch.name} to ${nextName}.`;
+			await loadBranches();
+		} catch (error) {
+			branchError = error instanceof Error ? error.message : 'Branch rename failed.';
+		} finally {
+			branchActionName = '';
+		}
+	}
+
+	async function deleteBranch(branch: GitBranch) {
+		if (branch.current || branchActionName) return;
+
+		if (!window.confirm(`Delete local branch "${branch.name}"?`)) {
+			return;
+		}
+
+		branchActionName = branch.name;
+		branchError = '';
+		branchMessage = '';
+
+		try {
+			const result = await execInProject('git', ['branch', '-D', branch.name]);
+			if (result.code !== 0) {
+				throw new Error(result.stderr || 'Branch delete failed.');
+			}
+
+			branchMessage = `Deleted ${branch.name}.`;
+			await loadBranches();
+		} catch (error) {
+			branchError = error instanceof Error ? error.message : 'Branch delete failed.';
+		} finally {
+			branchActionName = '';
 		}
 	}
 
@@ -270,6 +368,7 @@
 			board = { ...board, projectLocation };
 			copyMessage = 'Project location saved.';
 			void checkGitStatus(projectLocation);
+			void loadBranches();
 		} catch (error) {
 			orderError = error instanceof Error ? error.message : 'Project location could not be saved';
 			projectLocationDraft = board.projectLocation;
@@ -1317,6 +1416,7 @@
 			copyMessage = `Applied! ${deviceTools.gh === 'installed' ? 'PR created.' : 'Branch pushed (install gh CLI for auto PR).'}`;
 			applyLogStatus = 'succeeded';
 			appendApplyLog(`[done] ${copyMessage}`);
+			await loadBranches();
 		} catch (error) {
 			orderError = error instanceof Error ? error.message : 'Apply failed.';
 			applyLogStatus = 'failed';
@@ -1358,6 +1458,7 @@
 			} else {
 				appendApplyLog('[cleanup] no apply branch was created');
 			}
+			await loadBranches();
 		} finally {
 			await cleanupTempFile(imagePath);
 			await cleanupTempFile(promptPath);
@@ -1464,6 +1565,68 @@
 			</span>
 		</header>
 		<pre>{applyLogText || 'Waiting for Apply.'}</pre>
+	</section>
+
+	<section class="branches-panel" aria-label="Git branches">
+		<header>
+			<div>
+				<span>Branches</span>
+				<p>{branchesLoading ? 'Loading' : `${branches.length} local`}</p>
+			</div>
+			<button
+				type="button"
+				class="small-button"
+				onclick={loadBranches}
+				disabled={!board?.projectLocation || gitStatus !== 'git' || branchesLoading || Boolean(branchActionName)}
+			>
+				Refresh
+			</button>
+		</header>
+
+		{#if branchError || branchMessage}
+			<p class:error-text={branchError} class="branch-state">{branchError || branchMessage}</p>
+		{/if}
+
+		<div class="branches-list">
+			{#if gitStatus !== 'git'}
+				<p class="branch-empty">No git repository selected.</p>
+			{:else if branchesLoading}
+				<p class="branch-empty">Loading branches...</p>
+			{:else if branches.length}
+				{#each branches as branch (branch.name)}
+					<div class="branch-row" class:current-branch={branch.current}>
+						<span class="branch-name">
+							<span class="git-dot" aria-hidden="true"></span>
+							{branch.name}
+						</span>
+						<span class="branch-actions">
+							{#if branch.current}
+								<span class="current-label">Current</span>
+							{/if}
+							<button
+								type="button"
+								class="small-button"
+								onclick={() => renameBranch(branch)}
+								disabled={Boolean(branchActionName)}
+							>
+								Rename
+							</button>
+							<button
+								type="button"
+								class="small-button danger"
+								onclick={() => deleteBranch(branch)}
+								disabled={branch.current || Boolean(branchActionName)}
+								title={branch.current ? 'Switch to another branch before deleting this one' : 'Delete local branch'}
+							>
+								Delete
+							</button>
+						</span>
+					</div>
+				{/each}
+			{:else}
+				<p class="branch-empty">No local branches found.</p>
+			{/if}
+		</div>
 	</section>
 
 	<div class="board-shell">
@@ -2052,6 +2215,103 @@
 	.apply-log-panel.log-empty pre {
 		max-height: 44px;
 		color: var(--outline);
+	}
+
+	.branches-panel {
+		display: grid;
+		gap: 10px;
+		margin: 12px 18px 0;
+		border: 1px solid var(--outline-variant);
+		border-radius: 8px;
+		background: var(--surface-container-low);
+		overflow: hidden;
+	}
+
+	.branches-panel header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 10px 12px;
+		border-bottom: 1px solid var(--outline-variant);
+		background: var(--surface-container);
+	}
+
+	.branches-panel header span {
+		color: var(--on-surface);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.68rem;
+		font-weight: 750;
+		text-transform: uppercase;
+	}
+
+	.branches-panel header p,
+	.branch-state,
+	.branch-empty {
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.68rem;
+	}
+
+	.branch-state {
+		padding: 0 12px;
+	}
+
+	.error-text {
+		color: var(--error);
+	}
+
+	.branches-list {
+		display: grid;
+		gap: 6px;
+		max-height: 150px;
+		overflow: auto;
+		padding: 0 12px 12px;
+	}
+
+	.branch-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		min-height: 38px;
+		border: 1px solid var(--outline-variant);
+		border-radius: 6px;
+		padding: 5px 6px 5px 10px;
+		background: var(--surface-container-lowest);
+	}
+
+	.current-branch {
+		border-color: rgba(155, 212, 0, 0.45);
+	}
+
+	.branch-name,
+	.branch-actions {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+
+	.branch-name {
+		color: var(--on-surface);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.72rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.current-label {
+		color: var(--tertiary);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.62rem;
+		font-weight: 750;
+		text-transform: uppercase;
+	}
+
+	.branch-empty {
+		padding: 8px 0;
 	}
 
 	.board-shell {
