@@ -1041,6 +1041,18 @@
 		return [cmd, ...args].map(quoteCommandPart).join(' ');
 	}
 
+	function quoteCmdShellPart(part: string) {
+		if (!/[\s"&()^|<>]/u.test(part)) return part;
+
+		return `"${part
+			.replace(/(\\*)"/g, '$1$1\\"')
+			.replace(/(\\+)$/g, '$1$1')}"`;
+	}
+
+	function formatCmdShellCommand(cmd: string, args: string[]) {
+		return [cmd, ...args].map(quoteCmdShellPart).join(' ');
+	}
+
 	function appendCommandOutput(stream: 'stdout' | 'stderr', value: string) {
 		const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 		if (!normalized.trim()) return;
@@ -1087,23 +1099,17 @@
 	): Promise<{ code: number; stdout: string; stderr: string }> {
 		const { Command } = await import('@tauri-apps/plugin-shell');
 		const cwd = board?.projectLocation;
-		const command = Command.create('cmd', ['/c', cmd, ...args], cwd ? { cwd } : undefined);
+		const commandArgs =
+			cmd === 'codex' && options.log
+				? ['/d', '/s', '/c', `${formatCmdShellCommand(cmd, args)} < NUL`]
+				: ['/c', cmd, ...args];
+		const command = Command.create('cmd', commandArgs, cwd ? { cwd } : undefined);
 
 		if (options.log) {
 			let stdout = '';
 			let stderr = '';
 
-			appendApplyLog(`$ ${formatCommand(cmd, args)}`);
-
-			if (cmd === 'codex') {
-				const result = await command.execute();
-				stdout = result.stdout;
-				stderr = result.stderr;
-				appendCommandOutput('stdout', stdout);
-				appendCommandOutput('stderr', stderr);
-				appendApplyLog(`[exit] ${result.code ?? 1}`);
-				return { code: result.code ?? 1, stdout, stderr };
-			}
+			appendApplyLog(`$ ${cmd === 'codex' ? `${formatCommand(cmd, args)} < NUL` : formatCommand(cmd, args)}`);
 
 			const closePromise = new Promise<{ code: number | null; signal: number | null }>((resolve, reject) => {
 				command.on('close', resolve);
@@ -1186,6 +1192,7 @@
 				'--ask-for-approval',
 				'never',
 				'exec',
+				'--json',
 				'--cd',
 				board.projectLocation,
 				'--sandbox',
