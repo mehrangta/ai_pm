@@ -55,6 +55,7 @@
 	const pendingUploadSyncDelayMs = 500;
 	const applyTargetStorageKeyPrefix = 'ai-pm:apply-target-column:';
 	const codexModelStorageKeyPrefix = 'ai-pm:codex-model:';
+	const cardBranchStorageKeyPrefix = 'ai-pm:card-branches:';
 	const defaultCodexModel = 'gpt-5.5';
 	const defaultCodexReasoningEffort = 'high';
 	const orderSaveState: Record<OrderAction, OrderSaveState> = {
@@ -103,11 +104,15 @@
 	async function loadBoard() {
 		try {
 			const data = await getBoard(currentBoardId());
+			const cardBranchMap = readCardBranchMap(data.board.id);
 			board = data.board;
 			projectLocationDraft = data.board.projectLocation;
 			columns = data.columns.map((column) => ({
 				...column,
-				cards: column.cards.map((card) => ({ ...card }))
+				cards: column.cards.map((card) => ({
+					...card,
+					branchName: cardBranchMap[card.id] ?? null
+				}))
 			}));
 
 			if (!columns.some((column) => column.id === selectedColumnId)) {
@@ -448,6 +453,53 @@
 		}
 	}
 
+	function readCardBranchMap(boardId: string) {
+		if (typeof localStorage === 'undefined') return {} as Record<string, string>;
+
+		try {
+			const parsed: unknown = JSON.parse(
+				localStorage.getItem(`${cardBranchStorageKeyPrefix}${boardId}`) ?? '{}'
+			);
+			if (!isJsonRecord(parsed)) return {};
+
+			return Object.fromEntries(
+				Object.entries(parsed).filter(
+					([cardId, branchName]) =>
+						typeof cardId === 'string' &&
+						typeof branchName === 'string' &&
+						Boolean(branchName.trim())
+				)
+			) as Record<string, string>;
+		} catch {
+			return {};
+		}
+	}
+
+	function writeCardBranchMap(boardId: string, branchMap: Record<string, string>) {
+		if (typeof localStorage === 'undefined') return;
+
+		const key = `${cardBranchStorageKeyPrefix}${boardId}`;
+		if (Object.keys(branchMap).length) {
+			localStorage.setItem(key, JSON.stringify(branchMap));
+		} else {
+			localStorage.removeItem(key);
+		}
+	}
+
+	function saveCardBranchName(cardId: string, branchName: string) {
+		const boardId = currentBoardId();
+		const branchMap = readCardBranchMap(boardId);
+		branchMap[cardId] = branchName;
+		writeCardBranchMap(boardId, branchMap);
+	}
+
+	function removeCardBranchName(cardId: string) {
+		const boardId = currentBoardId();
+		const branchMap = readCardBranchMap(boardId);
+		delete branchMap[cardId];
+		writeCardBranchMap(boardId, branchMap);
+	}
+
 	function cardOrderPayload() {
 		return {
 			columns: columns.map((column) => ({
@@ -681,6 +733,7 @@
 			const cleanupMessages = mappedBranch ? await cleanupMappedCardBranch(mappedBranch) : [];
 			removeCard(card.id);
 			await boardAction(currentBoardId(), { action: 'deleteCard', cardId: card.id });
+			removeCardBranchName(card.id);
 			copyMessage = ['Card deleted.', ...cleanupMessages].join(' ');
 			await loadBranches();
 		} catch (error) {
@@ -1920,11 +1973,7 @@
 
 			// 7. Map card to branch for future cleanup
 			setApplyStep('Saving branch mapping...');
-			await boardAction(currentBoardId(), {
-				action: 'setCardBranch',
-				cardId: card.id,
-				branchName
-			});
+			saveCardBranchName(card.id, branchName);
 			updateCardInColumns(card.id, (entry) => ({ ...entry, branchName }));
 			appendApplyLog(`[card branch] ${branchName}`);
 
