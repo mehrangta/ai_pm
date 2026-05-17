@@ -132,6 +132,7 @@ export const GET: RequestHandler = async (event) => {
 					columnId: kanbanCard.columnId,
 					description: kanbanCard.description,
 					color: kanbanCard.color,
+					branchName: kanbanCard.branchName,
 					position: kanbanCard.position,
 					imageDataUrl: kanbanCardImage.dataUrl,
 					imageMimeType: kanbanCardImage.mimeType,
@@ -157,6 +158,7 @@ export const GET: RequestHandler = async (event) => {
 					columnId: card.columnId,
 					description: card.description,
 					color: card.color,
+					branchName: card.branchName,
 					position: card.position,
 					image: card.imageDataUrl
 						? {
@@ -336,6 +338,22 @@ export const POST: RequestHandler = async (event) => {
 		await db
 			.update(kanbanCard)
 			.set({ description, color, updatedAt: new Date() })
+			.where(eq(kanbanCard.id, cardId));
+
+		return apiJson(event, { ok: true });
+	}
+
+	if (action === 'setCardBranch') {
+		const cardId = textFrom(body, 'cardId');
+		const branchName = textFrom(body, 'branchName', 240);
+
+		if (!cardId || !branchName || !(await requireCard(db, board.id, cardId))) {
+			return apiError(event, 400, 'Card branch update is invalid');
+		}
+
+		await db
+			.update(kanbanCard)
+			.set({ branchName, updatedAt: new Date() })
 			.where(eq(kanbanCard.id, cardId));
 
 		return apiJson(event, { ok: true });

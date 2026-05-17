@@ -55,6 +55,8 @@
 	const pendingUploadSyncDelayMs = 500;
 	const applyTargetStorageKeyPrefix = 'ai-pm:apply-target-column:';
 	const codexModelStorageKeyPrefix = 'ai-pm:codex-model:';
+	const defaultCodexModel = 'gpt-5.5';
+	const defaultCodexReasoningEffort = 'high';
 	const orderSaveState: Record<OrderAction, OrderSaveState> = {
 		reorderColumns: { inFlight: false, pending: null },
 		moveCards: { inFlight: false, pending: null }
@@ -80,7 +82,7 @@
 		gh: 'unknown'
 	});
 	let applyTargetColumnId = $state('');
-	let codexModelDraft = $state('');
+	let codexModelDraft = $state(defaultCodexModel);
 	let applyingCardId = $state('');
 	let applyProgress = $state('');
 	let applyLogEntries = $state<string[]>([]);
@@ -338,6 +340,83 @@
 		}
 	}
 
+	async function localBranchExists(branchName: string) {
+		const result = await execInProject('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`]);
+		return result.code === 0;
+	}
+
+	async function mappedBranchSwitchTarget(branchName: string) {
+		const result = await execInProject('git', ['branch', '--format', '%(refname:short)']);
+		if (result.code !== 0) return '';
+
+		const localBranches = result.stdout
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.filter(Boolean);
+
+		return (
+			localBranches.find((candidate) => candidate === 'main' && candidate !== branchName) ??
+			localBranches.find((candidate) => candidate === 'master' && candidate !== branchName) ??
+			localBranches.find((candidate) => candidate !== branchName) ??
+			''
+		);
+	}
+
+	async function cleanupMappedCardBranch(branchName: string) {
+		if (!board?.projectLocation) {
+			throw new Error('Set a project location before deleting a mapped branch.');
+		}
+
+		const messages: string[] = [];
+		const currentBranchResult = await execInProject('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
+		if (currentBranchResult.code === 0 && currentBranchResult.stdout.trim() === branchName) {
+			const switchTarget = await mappedBranchSwitchTarget(branchName);
+			if (switchTarget) {
+				const checkoutResult = await execInProject('git', ['checkout', switchTarget]);
+				if (checkoutResult.code === 0) {
+					messages.push(`Switched to ${switchTarget}.`);
+				} else {
+					throw new Error(`Could not switch away from ${branchName}: ${checkoutResult.stderr}`);
+				}
+			} else {
+				throw new Error(`Cannot delete ${branchName}; no other local branch is available.`);
+			}
+		}
+
+		if (deviceTools.gh === 'installed') {
+			const closePrResult = await execInProject('gh', ['pr', 'close', branchName, '--delete-branch']);
+			if (closePrResult.code === 0) {
+				messages.push(`Closed PR and deleted remote branch ${branchName}.`);
+			} else {
+				messages.push(`PR cleanup skipped or failed: ${closePrResult.stderr || closePrResult.stdout}`);
+				const deleteRemoteResult = await execInProject('git', ['push', 'origin', '--delete', branchName]);
+				if (deleteRemoteResult.code === 0) {
+					messages.push(`Deleted remote branch ${branchName}.`);
+				} else {
+					messages.push(`Remote branch cleanup skipped or failed: ${deleteRemoteResult.stderr || deleteRemoteResult.stdout}`);
+				}
+			}
+		} else {
+			const deleteRemoteResult = await execInProject('git', ['push', 'origin', '--delete', branchName]);
+			if (deleteRemoteResult.code === 0) {
+				messages.push(`Deleted remote branch ${branchName}.`);
+			} else {
+				messages.push(`Remote branch cleanup skipped or failed: ${deleteRemoteResult.stderr || deleteRemoteResult.stdout}`);
+			}
+		}
+
+		if (await localBranchExists(branchName)) {
+			const deleteLocalResult = await execInProject('git', ['branch', '-D', branchName]);
+			if (deleteLocalResult.code === 0) {
+				messages.push(`Deleted local branch ${branchName}.`);
+			} else {
+				throw new Error(`Local branch cleanup failed: ${deleteLocalResult.stderr}`);
+			}
+		}
+
+		return messages;
+	}
+
 	function readApplyTargetColumnId(boardId: string) {
 		if (typeof localStorage === 'undefined') return '';
 
@@ -351,18 +430,18 @@
 	}
 
 	function readCodexModel(boardId: string) {
-		if (typeof localStorage === 'undefined') return '';
+		if (typeof localStorage === 'undefined') return defaultCodexModel;
 
-		return localStorage.getItem(`${codexModelStorageKeyPrefix}${boardId}`) ?? '';
+		return localStorage.getItem(`${codexModelStorageKeyPrefix}${boardId}`) ?? defaultCodexModel;
 	}
 
 	function saveCodexModel(model = codexModelDraft) {
 		if (typeof localStorage === 'undefined') return;
 
 		const key = `${codexModelStorageKeyPrefix}${currentBoardId()}`;
-		const value = model.trim();
+		const value = model.trim() || defaultCodexModel;
 		codexModelDraft = value;
-		if (value) {
+		if (value !== defaultCodexModel) {
 			localStorage.setItem(key, value);
 		} else {
 			localStorage.removeItem(key);
@@ -586,18 +665,24 @@
 			return;
 		}
 
-		if (!window.confirm('Delete this card?')) return;
+		const mappedBranch = card.branchName?.trim() ?? '';
+		const message = mappedBranch
+			? `Delete this card and remove branch/PR "${mappedBranch}"?`
+			: 'Delete this card?';
+		if (!window.confirm(message)) return;
 
 		notice = '';
 		orderError = '';
 		copyMessage = '';
 
 		const snapshot = columns;
-		removeCard(card.id);
 
 		try {
+			const cleanupMessages = mappedBranch ? await cleanupMappedCardBranch(mappedBranch) : [];
+			removeCard(card.id);
 			await boardAction(currentBoardId(), { action: 'deleteCard', cardId: card.id });
-			copyMessage = 'Card deleted.';
+			copyMessage = ['Card deleted.', ...cleanupMessages].join(' ');
+			await loadBranches();
 		} catch (error) {
 			columns = snapshot;
 			orderError = error instanceof Error ? error.message : 'Card delete failed';
@@ -766,6 +851,7 @@
 			columnId,
 			description: 'Pasted image',
 			color: '#ffffff',
+			branchName: null,
 			position: column.cards.length,
 			image: {
 				dataUrl: previewUrl,
@@ -1686,6 +1772,11 @@
 			return;
 		}
 
+		if (card.branchName) {
+			orderError = `Card already maps to ${card.branchName}. Delete the card to remove that branch/PR.`;
+			return;
+		}
+
 		if (deviceTools.git !== 'installed') {
 			orderError = 'Git is not installed on this device.';
 			return;
@@ -1697,7 +1788,7 @@
 		}
 
 		const slug = slugify(card.description) || 'card-task';
-		const branchName = `feat/${slug}`;
+		const branchName = `feat/${shortId(card.id)}-${slug}`;
 		const commitMsg = card.description.slice(0, 72);
 		let imagePath = '';
 		let promptPath = '';
@@ -1776,13 +1867,15 @@
 				'--sandbox',
 				'danger-full-access'
 			];
-			const codexModel = codexModelDraft.trim();
-			if (codexModel) {
-				codexArgs.push('--model', codexModel);
-				appendApplyLog(`[codex model] ${codexModel}`);
-			} else {
-				appendApplyLog('[codex model] default');
-			}
+			const codexModel = codexModelDraft.trim() || defaultCodexModel;
+			codexArgs.push(
+				'--model',
+				codexModel,
+				'-c',
+				`model_reasoning_effort="${defaultCodexReasoningEffort}"`
+			);
+			appendApplyLog(`[codex model] ${codexModel}`);
+			appendApplyLog(`[codex reasoning] ${defaultCodexReasoningEffort}`);
 			if (imagePath) {
 				codexArgs.push('--image', imagePath);
 			}
@@ -1825,11 +1918,21 @@
 				appendApplyLog('[skip] gh CLI not installed; PR creation skipped');
 			}
 
-			// 7. Switch back to main
+			// 7. Map card to branch for future cleanup
+			setApplyStep('Saving branch mapping...');
+			await boardAction(currentBoardId(), {
+				action: 'setCardBranch',
+				cardId: card.id,
+				branchName
+			});
+			updateCardInColumns(card.id, (entry) => ({ ...entry, branchName }));
+			appendApplyLog(`[card branch] ${branchName}`);
+
+			// 8. Switch back to main
 			setApplyStep(`Switching back to ${originalBranch}...`);
 			await execInProject('git', ['checkout', originalBranch], { log: true });
 
-			// 8. Move card to apply target column
+			// 9. Move card to apply target column
 			if (applyTargetColumnId && applyTargetColumnId !== card.columnId) {
 				setApplyStep('Moving card to apply target...');
 				const targetColumn = columns.find((c) => c.id === applyTargetColumnId);
@@ -1837,7 +1940,10 @@
 					const sourceColumn = columns.find((c) => c.id === card.columnId);
 					if (sourceColumn) {
 						sourceColumn.cards = sourceColumn.cards.filter((c) => c.id !== card.id);
-						targetColumn.cards = [...targetColumn.cards, { ...card, columnId: applyTargetColumnId }];
+						targetColumn.cards = [
+							...targetColumn.cards,
+							{ ...card, branchName, columnId: applyTargetColumnId }
+						];
 						columns = [...columns];
 						try {
 							await boardAction(currentBoardId(), { action: 'moveCards', ...cardOrderPayload() });
@@ -1979,9 +2085,10 @@
 				Codex model
 				<input
 					bind:value={codexModelDraft}
-					placeholder="Default"
+					placeholder={defaultCodexModel}
 					aria-label="Codex model"
 					spellcheck="false"
+					title={`Default: ${defaultCodexModel}`}
 					onchange={() => saveCodexModel()}
 				/>
 			</label>
@@ -2182,6 +2289,12 @@
 								</div>
 								<h3>{card.description}</h3>
 
+								{#if card.branchName}
+									<span class="card-branch-badge" title={card.branchName}>
+										{card.branchName}
+									</span>
+								{/if}
+
 								{#if card.image}
 									<img
 										src={card.image.dataUrl}
@@ -2220,8 +2333,8 @@
 										type="button"
 										class="small-button apply-button"
 										onclick={() => applyCard(card)}
-										disabled={isPendingCard(card) || applyingCardId !== '' || deviceTools.codex !== 'installed' || deviceTools.git !== 'installed' || !board?.projectLocation}
-										title={!board?.projectLocation ? 'Set project location first' : deviceTools.git !== 'installed' ? 'Git not installed' : deviceTools.codex !== 'installed' ? 'Codex not installed' : 'Apply card via Codex'}
+										disabled={isPendingCard(card) || Boolean(card.branchName) || applyingCardId !== '' || deviceTools.codex !== 'installed' || deviceTools.git !== 'installed' || !board?.projectLocation}
+										title={card.branchName ? `Mapped to ${card.branchName}` : !board?.projectLocation ? 'Set project location first' : deviceTools.git !== 'installed' ? 'Git not installed' : deviceTools.codex !== 'installed' ? 'Codex not installed' : 'Apply card via Codex'}
 									>
 										{applyingCardId === card.id ? applyProgress || 'Applying...' : 'Apply'}
 									</button>
@@ -3075,6 +3188,21 @@
 		border-radius: 5px;
 		object-fit: contain;
 		background: #060606;
+	}
+
+	.card-branch-badge {
+		display: block;
+		max-width: 100%;
+		overflow: hidden;
+		border: 1px solid color-mix(in srgb, var(--tertiary) 55%, transparent);
+		border-radius: 5px;
+		padding: 4px 7px;
+		background: color-mix(in srgb, var(--tertiary) 9%, transparent);
+		color: var(--tertiary);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.66rem;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.copy-button {

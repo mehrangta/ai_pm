@@ -27,6 +27,7 @@ export type BoardCard = {
 	columnId: string;
 	description: string;
 	color: string;
+	branchName: string | null;
 	position: number;
 	image: CardImage | null;
 };

@@ -58,6 +58,7 @@ export const kanbanCard = sqliteTable(
 			.references(() => kanbanColumn.id, { onDelete: 'cascade' }),
 		description: text('description').notNull(),
 		color: text('color').notNull().default('#ffffff'),
+		branchName: text('branch_name'),
 		position: integer('position').notNull().default(0),
 		createdAt: integer('created_at', { mode: 'timestamp_ms' })
 			.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
