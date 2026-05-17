@@ -43,6 +43,9 @@
 	type GitBranch = {
 		name: string;
 		current: boolean;
+		commitHash: string;
+		commitDate: string;
+		commitSubject: string;
 	};
 
 	const flipDurationMs = 160;
@@ -156,9 +159,26 @@
 			.split('\n')
 			.map((line) => {
 				const normalized = line.trimEnd();
+
+				if (normalized.includes('\t')) {
+					const [head = '', name = '', commitHash = '', commitDate = '', ...subjectParts] =
+						normalized.split('\t');
+
+					return {
+						name: name.trim(),
+						current: head.trim() === '*',
+						commitHash: commitHash.trim(),
+						commitDate: commitDate.trim(),
+						commitSubject: subjectParts.join('\t').trim()
+					};
+				}
+
 				return {
 					name: normalized.slice(2).trim(),
-					current: normalized.startsWith('*')
+					current: normalized.startsWith('*'),
+					commitHash: '',
+					commitDate: '',
+					commitSubject: ''
 				};
 			})
 			.filter((branch) => branch.name);
@@ -194,6 +214,10 @@
 		return 'Delete local branch';
 	}
 
+	function branchCommitText(branch: GitBranch) {
+		return [branch.commitHash, branch.commitDate, branch.commitSubject].filter(Boolean).join(' - ');
+	}
+
 	async function loadBranches() {
 		branchError = '';
 
@@ -205,7 +229,10 @@
 		branchesLoading = true;
 
 		try {
-			const result = await execInProject('git', ['branch', '--list']);
+			const result = await execInProject('git', [
+				'branch',
+				'--format=%(HEAD)%09%(refname:short)%09%(objectname:short)%09%(committerdate:relative)%09%(subject)'
+			]);
 			if (result.code !== 0) {
 				throw new Error(result.stderr || 'Branches could not be loaded.');
 			}
@@ -1841,9 +1868,16 @@
 			{:else if branches.length}
 				{#each branches as branch (branch.name)}
 					<div class="branch-row" class:current-branch={branch.current}>
-						<span class="branch-name">
-							<span class="git-dot" aria-hidden="true"></span>
-							{branch.name}
+						<span class="branch-details">
+							<span class="branch-name">
+								<span class="git-dot" aria-hidden="true"></span>
+								{branch.name}
+							</span>
+							{#if branchCommitText(branch)}
+								<span class="branch-commit" title={branch.commitSubject}>
+									{branchCommitText(branch)}
+								</span>
+							{/if}
 						</span>
 						<span class="branch-actions">
 							{#if branch.current}
@@ -2544,10 +2578,10 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
-		min-height: 38px;
+		min-height: 46px;
 		border: 1px solid var(--outline-variant);
 		border-radius: 6px;
-		padding: 5px 6px 5px 10px;
+		padding: 7px 6px 7px 10px;
 		background: var(--surface-container-lowest);
 	}
 
@@ -2555,12 +2589,18 @@
 		border-color: rgba(155, 212, 0, 0.45);
 	}
 
+	.branch-details,
 	.branch-name,
 	.branch-actions {
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
 		min-width: 0;
+	}
+
+	.branch-details {
+		display: grid;
+		gap: 3px;
 	}
 
 	.branch-actions {
@@ -2572,6 +2612,17 @@
 		color: var(--on-surface);
 		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 		font-size: 0.72rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.branch-commit {
+		max-width: min(64vw, 900px);
+		color: var(--on-surface-variant);
+		font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 0.64rem;
+		line-height: 1.25;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
