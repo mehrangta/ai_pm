@@ -1343,6 +1343,43 @@
 		return '';
 	}
 
+	function collectCodexFilePaths(value: unknown, paths: string[] = [], depth = 0) {
+		if (depth > 5 || value === null || value === undefined) return paths;
+		if (Array.isArray(value)) {
+			for (const entry of value) collectCodexFilePaths(entry, paths, depth + 1);
+			return paths;
+		}
+		if (!isJsonRecord(value)) return paths;
+
+		for (const [key, entry] of Object.entries(value)) {
+			if (
+				['file', 'file_path', 'filePath', 'filename', 'path', 'target_file'].includes(key) &&
+				typeof entry === 'string' &&
+				entry.trim()
+			) {
+				const path = entry.trim();
+				if (!paths.includes(path)) paths.push(path);
+			} else if (Array.isArray(entry) || isJsonRecord(entry)) {
+				collectCodexFilePaths(entry, paths, depth + 1);
+			}
+		}
+
+		return paths;
+	}
+
+	function formatCodexFileChange(eventType: string, item: JsonRecord) {
+		const status = codexItemStatus(eventType);
+		const statusText = status ? ` ${status}` : '';
+		const paths = collectCodexFilePaths(item);
+		const detail = Object.keys(item).some((key) => key !== 'type') ? compactJson(item) : '';
+		const lines = paths.length
+			? paths.map((path) => `[codex file]${statusText} ${path}`)
+			: [`[codex file]${statusText}`];
+
+		if (!paths.length && detail) lines.push(`[codex file detail] ${detail}`);
+		return lines;
+	}
+
 	function formatCodexCommandExecution(eventType: string, item: JsonRecord) {
 		const status = codexItemStatus(eventType);
 		const statusText = status ? ` ${status}` : '';
@@ -1413,6 +1450,10 @@
 
 		if (itemType === 'command_execution') {
 			return formatCodexCommandExecution(eventType, item);
+		}
+
+		if (itemType === 'file_change') {
+			return formatCodexFileChange(eventType, item);
 		}
 
 		const text = textFromRecord(item, [
