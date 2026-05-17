@@ -1229,12 +1229,152 @@
 		return stdinFile ? `${command} < ${quoteBatchArg(stdinFile)}` : command;
 	}
 
-	function appendCommandOutput(stream: 'stdout' | 'stderr', value: string) {
-		const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+	type CommandStream = 'stdout' | 'stderr';
+	type JsonRecord = Record<string, unknown>;
+
+	function isJsonRecord(value: unknown): value is JsonRecord {
+		return typeof value === 'object' && value !== null && !Array.isArray(value);
+	}
+
+	function recordString(record: JsonRecord, key: string) {
+		const value = record[key];
+		return typeof value === 'string' ? value : '';
+	}
+
+	function textFromValue(value: unknown, depth = 0): string {
+		if (depth > 4 || value === null || value === undefined) return '';
+		if (typeof value === 'string') return value.trimEnd();
+		if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+		if (Array.isArray(value)) {
+			return value
+				.map((entry) => textFromValue(entry, depth + 1))
+				.filter(Boolean)
+				.join('\n');
+		}
+
+		if (!isJsonRecord(value)) return '';
+
+		const text = textFromRecord(value, [
+			'text',
+			'message',
+			'content',
+			'output',
+			'summary',
+			'error',
+			'delta',
+			'arguments',
+			'command',
+			'cmd'
+		], depth + 1);
+		if (text) return text;
+
+		try {
+			return JSON.stringify(value);
+		} catch {
+			return '';
+		}
+	}
+
+	function textFromRecord(record: JsonRecord, keys: string[], depth = 0) {
+		for (const key of keys) {
+			const text = textFromValue(record[key], depth);
+			if (text) return text;
+		}
+
+		return '';
+	}
+
+	function prefixedLines(prefix: string, text: string) {
+		const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
+		if (!normalized.trim()) return [];
+
+		return normalized.split('\n').map((line) => `${prefix} ${line}`);
+	}
+
+	function codexItemStatus(eventType: string) {
+		if (eventType.endsWith('.started')) return 'started';
+		if (eventType.endsWith('.completed')) return 'completed';
+		if (eventType.endsWith('.failed')) return 'failed';
+		return '';
+	}
+
+	function formatCodexItem(eventType: string, item: JsonRecord) {
+		const itemType = recordString(item, 'type') || eventType;
+		const status = codexItemStatus(eventType);
+		const statusText = status ? ` ${status}` : '';
+
+		if (['agent_message', 'assistant_message', 'message'].includes(itemType)) {
+			return prefixedLines('[codex message]', textFromRecord(item, ['text', 'message', 'content']));
+		}
+
+		if (['reasoning', 'reasoning_summary'].includes(itemType)) {
+			const text = textFromRecord(item, ['summary', 'text', 'content']);
+			return text
+				? prefixedLines('[codex reasoning]', text)
+				: [`[codex reasoning]${statusText}`];
+		}
+
+		if (['function_call', 'tool_call', 'local_shell_call', 'shell_call'].includes(itemType)) {
+			const name =
+				recordString(item, 'name') ||
+				recordString(item, 'tool_name') ||
+				recordString(item, 'toolName') ||
+				itemType;
+			const detail = textFromRecord(item, ['command', 'cmd', 'arguments', 'args', 'input']);
+			return detail
+				? [`[codex tool] ${name}${statusText}`, ...prefixedLines('[codex args]', detail)]
+				: [`[codex tool] ${name}${statusText}`];
+		}
+
+		if (['function_call_output', 'tool_call_output', 'command_output'].includes(itemType)) {
+			const text = textFromRecord(item, ['output', 'content', 'text']);
+			return text ? prefixedLines('[codex output]', text) : [`[codex output]${statusText}`];
+		}
+
+		const text = textFromRecord(item, ['message', 'text', 'content', 'output', 'error', 'delta']);
+		return text
+			? prefixedLines(`[codex ${itemType}]`, text)
+			: [`[codex] ${eventType}: ${itemType}${statusText}`];
+	}
+
+	function formatCodexOutputLine(stream: CommandStream, line: string) {
+		if (stream === 'stderr') return prefixedLines('[codex stderr]', line);
+
+		try {
+			const event: unknown = JSON.parse(line);
+			if (!isJsonRecord(event)) return prefixedLines('[codex stdout]', line);
+
+			const type = recordString(event, 'type') || 'event';
+			const item = event.item;
+
+			if (isJsonRecord(item)) return formatCodexItem(type, item);
+
+			if (type === 'thread.started') {
+				const threadId = recordString(event, 'thread_id');
+				return [`[codex] thread started${threadId ? ` ${threadId}` : ''}`];
+			}
+
+			if (type === 'turn.started') return ['[codex] turn started'];
+			if (type === 'turn.completed') return ['[codex] turn completed'];
+			if (type === 'turn.failed') {
+				const text = textFromRecord(event, ['error', 'message']);
+				return text ? prefixedLines('[codex error]', text) : ['[codex error] turn failed'];
+			}
+
+			const text = textFromRecord(event, ['message', 'text', 'content', 'output', 'error', 'delta']);
+			return text ? prefixedLines(`[codex ${type}]`, text) : [`[codex json] ${line}`];
+		} catch {
+			return prefixedLines('[codex stdout]', line);
+		}
+	}
+
+	function appendCommandOutputLine(stream: CommandStream, line: string, isCodex = false) {
+		const normalized = line.trimEnd();
 		if (!normalized.trim()) return;
 
-		for (const line of normalized.trimEnd().split('\n')) {
-			appendApplyLog(`[${stream}] ${line}`);
+		const entries = isCodex ? formatCodexOutputLine(stream, normalized) : [`[${stream}] ${normalized}`];
+		for (const entry of entries) {
+			appendApplyLog(entry);
 		}
 	}
 
@@ -1308,19 +1448,42 @@
 		if (options.log) {
 			let stdout = '';
 			let stderr = '';
+			let stdoutBuffer = '';
+			let stderrBuffer = '';
+			const isCodexCommand = cmd === 'codex';
 
 			appendApplyLog(`$ ${formatCommand(cmd, args)}`);
+
+			const appendStreamData = (stream: CommandStream, data = '', flush = false) => {
+				const normalized = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+				if (stream === 'stdout') {
+					stdoutBuffer += normalized;
+					const lines = stdoutBuffer.split('\n');
+					stdoutBuffer = flush ? '' : (lines.pop() ?? '');
+					for (const line of lines) {
+						appendCommandOutputLine(stream, line, isCodexCommand);
+					}
+					return;
+				}
+
+				stderrBuffer += normalized;
+				const lines = stderrBuffer.split('\n');
+				stderrBuffer = flush ? '' : (lines.pop() ?? '');
+				for (const line of lines) {
+					appendCommandOutputLine(stream, line, isCodexCommand);
+				}
+			};
 
 			const closePromise = new Promise<{ code: number | null; signal: number | null }>((resolve, reject) => {
 				command.on('close', resolve);
 				command.on('error', reject);
 				command.stdout.on('data', (data) => {
 					stdout += data;
-					appendCommandOutput('stdout', data);
+					appendStreamData('stdout', data);
 				});
 				command.stderr.on('data', (data) => {
 					stderr += data;
-					appendCommandOutput('stderr', data);
+					appendStreamData('stderr', data);
 				});
 			});
 
@@ -1328,10 +1491,14 @@
 				await command.spawn();
 				const result = await closePromise;
 				const code = result.code ?? 1;
+				appendStreamData('stdout', '', true);
+				appendStreamData('stderr', '', true);
 				appendApplyLog(`[exit] ${code}`);
 				return { code, stdout, stderr };
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
+				appendStreamData('stdout', '', true);
+				appendStreamData('stderr', '', true);
 				appendApplyLog(`[error] ${message}`);
 				return { code: 1, stdout, stderr: message };
 			} finally {
