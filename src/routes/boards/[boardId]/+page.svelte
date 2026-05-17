@@ -172,9 +172,25 @@
 		return isProtectedBranch(branch) ? 'main/master branches cannot be renamed' : 'Rename local branch';
 	}
 
+	function branchSwitchTargetForDelete(branch: GitBranch) {
+		if (!branch.current) return '';
+
+		return (
+			branches.find((candidate) => candidate.name === 'main' && !candidate.current)?.name ??
+			branches.find((candidate) => candidate.name === 'master' && !candidate.current)?.name ??
+			branches.find((candidate) => !candidate.current)?.name ??
+			''
+		);
+	}
+
 	function branchDeleteTitle(branch: GitBranch) {
 		if (isProtectedBranch(branch)) return 'main/master branches cannot be deleted';
-		if (branch.current) return 'Switch to another branch before deleting this one';
+		if (branch.current) {
+			const switchTarget = branchSwitchTargetForDelete(branch);
+			return switchTarget
+				? `Switch to ${switchTarget} and delete local branch`
+				: 'No other local branch is available for checkout before deleting';
+		}
 		return 'Delete local branch';
 	}
 
@@ -240,35 +256,53 @@
 			return;
 		}
 
-		if (branch.current) {
+		if (branchActionName) return;
+
+		const switchTarget = branchSwitchTargetForDelete(branch);
+		if (branch.current && !switchTarget) {
 			branchError = '';
-			branchMessage = 'Switch to another branch before deleting it.';
+			branchMessage = 'No other local branch is available for checkout before deleting it.';
 			return;
 		}
-
-		if (branchActionName) return;
 
 		if (branchDeleteCandidate !== branch.name) {
 			branchDeleteCandidate = branch.name;
 			branchError = '';
-			branchMessage = `Press Confirm to delete ${branch.name}.`;
+			branchMessage = switchTarget
+				? `Press Confirm to switch to ${switchTarget} and delete ${branch.name}.`
+				: `Press Confirm to delete ${branch.name}.`;
 			return;
 		}
 
 		branchActionName = branch.name;
 		branchError = '';
 		branchMessage = '';
+		let switchedBeforeDelete = false;
 
 		try {
+			if (switchTarget) {
+				const checkoutResult = await execInProject('git', ['checkout', switchTarget]);
+				if (checkoutResult.code !== 0) {
+					throw new Error(checkoutResult.stderr || `Checkout ${switchTarget} failed.`);
+				}
+				switchedBeforeDelete = true;
+			}
+
 			const result = await execInProject('git', ['branch', '-D', branch.name]);
 			if (result.code !== 0) {
 				throw new Error(result.stderr || 'Branch delete failed.');
 			}
 
-			branchMessage = `Deleted ${branch.name}.`;
+			branchMessage = switchTarget
+				? `Switched to ${switchTarget} and deleted ${branch.name}.`
+				: `Deleted ${branch.name}.`;
 			await loadBranches();
 		} catch (error) {
-			branchError = error instanceof Error ? error.message : 'Branch delete failed.';
+			const message = error instanceof Error ? error.message : 'Branch delete failed.';
+			if (switchedBeforeDelete) {
+				await loadBranches();
+			}
+			branchError = message;
 		} finally {
 			branchActionName = '';
 			branchDeleteCandidate = '';
@@ -1669,7 +1703,11 @@
 								type="button"
 								class="small-button danger"
 								onclick={() => deleteBranch(branch)}
-								disabled={branch.current || isProtectedBranch(branch) || Boolean(branchActionName)}
+								disabled={
+									isProtectedBranch(branch) ||
+									Boolean(branchActionName) ||
+									(branch.current && !branchSwitchTargetForDelete(branch))
+								}
 								title={branchDeleteTitle(branch)}
 							>
 								{branchActionName === branch.name
