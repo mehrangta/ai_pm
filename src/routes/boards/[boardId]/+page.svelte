@@ -1614,7 +1614,7 @@
 				'--cd',
 				board.projectLocation,
 				'--sandbox',
-				'workspace-write'
+				'danger-full-access'
 			];
 			if (imagePath) {
 				codexArgs.push('--image', imagePath);
