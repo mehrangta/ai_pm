@@ -54,6 +54,7 @@
 	const pendingUploadSyncAttempts = 6;
 	const pendingUploadSyncDelayMs = 500;
 	const applyTargetStorageKeyPrefix = 'ai-pm:apply-target-column:';
+	const codexModelStorageKeyPrefix = 'ai-pm:codex-model:';
 	const orderSaveState: Record<OrderAction, OrderSaveState> = {
 		reorderColumns: { inFlight: false, pending: null },
 		moveCards: { inFlight: false, pending: null }
@@ -79,6 +80,7 @@
 		gh: 'unknown'
 	});
 	let applyTargetColumnId = $state('');
+	let codexModelDraft = $state('');
 	let applyingCardId = $state('');
 	let applyProgress = $state('');
 	let applyLogEntries = $state<string[]>([]);
@@ -114,6 +116,7 @@
 			applyTargetColumnId = columns.some((column) => column.id === savedApplyTargetColumnId)
 				? savedApplyTargetColumnId
 				: (columns[0]?.id ?? '');
+			codexModelDraft = readCodexModel(data.board.id);
 
 			void checkGitStatus(data.board.projectLocation);
 			void checkDeviceTools();
@@ -345,6 +348,25 @@
 		if (typeof localStorage === 'undefined') return;
 
 		localStorage.setItem(`${applyTargetStorageKeyPrefix}${currentBoardId()}`, columnId);
+	}
+
+	function readCodexModel(boardId: string) {
+		if (typeof localStorage === 'undefined') return '';
+
+		return localStorage.getItem(`${codexModelStorageKeyPrefix}${boardId}`) ?? '';
+	}
+
+	function saveCodexModel(model = codexModelDraft) {
+		if (typeof localStorage === 'undefined') return;
+
+		const key = `${codexModelStorageKeyPrefix}${currentBoardId()}`;
+		const value = model.trim();
+		codexModelDraft = value;
+		if (value) {
+			localStorage.setItem(key, value);
+		} else {
+			localStorage.removeItem(key);
+		}
 	}
 
 	function cardOrderPayload() {
@@ -1754,6 +1776,13 @@
 				'--sandbox',
 				'danger-full-access'
 			];
+			const codexModel = codexModelDraft.trim();
+			if (codexModel) {
+				codexArgs.push('--model', codexModel);
+				appendApplyLog(`[codex model] ${codexModel}`);
+			} else {
+				appendApplyLog('[codex model] default');
+			}
 			if (imagePath) {
 				codexArgs.push('--image', imagePath);
 			}
@@ -1944,6 +1973,17 @@
 						<option value={column.id}>{column.title}</option>
 					{/each}
 				</select>
+			</label>
+
+			<label class="codex-model-control">
+				Codex model
+				<input
+					bind:value={codexModelDraft}
+					placeholder="Default"
+					aria-label="Codex model"
+					spellcheck="false"
+					onchange={() => saveCodexModel()}
+				/>
 			</label>
 
 			<div class="tool-badges">
@@ -2458,6 +2498,10 @@
 		display: flex;
 		gap: 5px;
 		flex-wrap: wrap;
+	}
+
+	.codex-model-control {
+		width: 160px;
 	}
 
 	.tool-badge {
