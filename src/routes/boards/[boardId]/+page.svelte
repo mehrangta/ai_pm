@@ -83,7 +83,6 @@
 	let applyProgress = $state('');
 	let applyLogEntries = $state<string[]>([]);
 	let applyLogStatus = $state<'idle' | 'running' | 'succeeded' | 'failed'>('idle');
-	let applyLogText = $derived(applyLogEntries.join('\n'));
 	let branches = $state<GitBranch[]>([]);
 	let branchesLoading = $state(false);
 	let branchMessage = $state('');
@@ -1318,6 +1317,19 @@
 		return normalized.split('\n').map((line) => `${prefix} ${line}`);
 	}
 
+	function applyLogLineClass(entry: string) {
+		if (entry.startsWith('[codex message]')) return 'apply-log-line codex-message-line';
+		if (entry.startsWith('[codex reasoning]')) return 'apply-log-line codex-reasoning-line';
+		if (entry.startsWith('[codex error]') || entry.startsWith('[codex stderr]')) {
+			return 'apply-log-line apply-log-error-line';
+		}
+		if (entry.startsWith('[codex file]')) return 'apply-log-line codex-file-line';
+		if (entry.startsWith('[codex')) return 'apply-log-line codex-event-line';
+		if (entry.startsWith('[error]')) return 'apply-log-line apply-log-error-line';
+		if (entry.startsWith('$ ')) return 'apply-log-line apply-log-command-line';
+		return 'apply-log-line';
+	}
+
 	function codexItemStatus(eventType: string) {
 		if (eventType.endsWith('.started')) return 'started';
 		if (eventType.endsWith('.completed')) return 'completed';
@@ -1963,7 +1975,7 @@
 				{applyLogStatus}
 			</span>
 		</header>
-		<pre>{applyLogText || 'Waiting for Apply.'}</pre>
+		<pre>{#if applyLogEntries.length}{#each applyLogEntries as entry, index (index)}<span class={applyLogLineClass(entry)}>{entry}</span>{/each}{:else}Waiting for Apply.{/if}</pre>
 	</section>
 
 	<section class="branches-panel" aria-label="Git branches">
@@ -2640,6 +2652,35 @@
 		line-height: 1.45;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+	}
+
+	.apply-log-line {
+		display: block;
+		color: var(--on-surface-variant);
+	}
+
+	.codex-message-line {
+		color: #a7f3d0;
+	}
+
+	.codex-reasoning-line {
+		color: #c4b5fd;
+	}
+
+	.codex-file-line {
+		color: #93c5fd;
+	}
+
+	.codex-event-line {
+		color: #7dd3fc;
+	}
+
+	.apply-log-command-line {
+		color: var(--on-surface);
+	}
+
+	.apply-log-error-line {
+		color: var(--error);
 	}
 
 	.apply-log-panel.log-empty pre {
