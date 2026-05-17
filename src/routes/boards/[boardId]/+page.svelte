@@ -1663,13 +1663,30 @@
 				appendApplyLog(`[image] ${imagePath}`);
 			}
 
-			// 2. Create feature branch
+			// 2. Create feature branch and switch to it before Codex edits files.
 			setApplyStep('Creating branch...');
-			const branchResult = await execInProject('git', ['checkout', '-b', branchName], { log: true });
+			const branchResult = await execInProject('git', ['branch', branchName], { log: true });
 			if (branchResult.code !== 0) {
 				throw new Error(`Branch creation failed: ${branchResult.stderr}`);
 			}
 			createdBranch = true;
+
+			setApplyStep(`Switching to ${branchName}...`);
+			const checkoutBranchResult = await execInProject('git', ['checkout', branchName], { log: true });
+			if (checkoutBranchResult.code !== 0) {
+				throw new Error(`Branch checkout failed: ${checkoutBranchResult.stderr}`);
+			}
+
+			const activeBranchResult = await execInProject('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+				log: true
+			});
+			if (activeBranchResult.code !== 0 || activeBranchResult.stdout.trim() !== branchName) {
+				throw new Error(
+					`Branch checkout verification failed: expected ${branchName}, got ${
+						activeBranchResult.stdout.trim() || activeBranchResult.stderr.trim() || 'unknown'
+					}`
+				);
+			}
 
 			// 3. Run codex exec
 			setApplyStep('Running Codex...');
