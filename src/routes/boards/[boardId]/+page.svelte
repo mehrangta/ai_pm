@@ -673,7 +673,14 @@
 	}
 
 	function errorMessage(error: unknown) {
-		return error instanceof Error ? error.message : 'Unknown error';
+		if (error instanceof Error) return error.message;
+		if (typeof error === 'string') return error || 'Unknown error';
+
+		try {
+			return JSON.stringify(error) || 'Unknown error';
+		} catch {
+			return 'Unknown error';
+		}
 	}
 
 	function delay(ms: number) {
@@ -1490,7 +1497,7 @@
 			appendApplyLog(`[done] ${copyMessage}`);
 			await loadBranches();
 		} catch (error) {
-			orderError = error instanceof Error ? error.message : 'Apply failed.';
+			orderError = errorMessage(error);
 			applyLogStatus = 'failed';
 			appendApplyLog(`[error] ${orderError}`);
 
