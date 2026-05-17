@@ -1325,6 +1325,59 @@
 		return '';
 	}
 
+	function compactJson(value: unknown) {
+		try {
+			return JSON.stringify(value) || '';
+		} catch {
+			return '';
+		}
+	}
+
+	function recordNumber(record: JsonRecord, keys: string[]) {
+		for (const key of keys) {
+			const value = record[key];
+			if (typeof value === 'number') return String(value);
+			if (typeof value === 'string' && value.trim()) return value.trim();
+		}
+
+		return '';
+	}
+
+	function formatCodexCommandExecution(eventType: string, item: JsonRecord) {
+		const status = codexItemStatus(eventType);
+		const statusText = status ? ` ${status}` : '';
+		const command = textFromRecord(item, [
+			'command',
+			'cmd',
+			'cmdline',
+			'shell_command',
+			'args',
+			'arguments',
+			'input'
+		]);
+		const cwd = textFromRecord(item, ['cwd', 'workdir', 'working_directory']);
+		const exitCode = recordNumber(item, ['exit_code', 'exitCode', 'code']);
+		const stdout = textFromRecord(item, ['stdout']);
+		const stderr = textFromRecord(item, ['stderr']);
+		const output = textFromRecord(item, ['output', 'content']);
+		const detail = Object.keys(item).some((key) => key !== 'type') ? compactJson(item) : '';
+		const lines = [`[codex command]${statusText}`];
+
+		if (cwd) lines.push(...prefixedLines('[codex cwd]', cwd));
+		if (command) lines.push(...prefixedLines('[codex cmd]', command));
+		if (exitCode) lines.push(`[codex exit] ${exitCode}`);
+		if (stdout) lines.push(...prefixedLines('[codex stdout]', stdout));
+		if (stderr) lines.push(...prefixedLines('[codex stderr]', stderr));
+		if (output && output !== stdout && output !== stderr) {
+			lines.push(...prefixedLines('[codex output]', output));
+		}
+		if (!command && !stdout && !stderr && !output && detail) {
+			lines.push(`[codex command detail] ${detail}`);
+		}
+
+		return lines;
+	}
+
 	function formatCodexItem(eventType: string, item: JsonRecord) {
 		const itemType = recordString(item, 'type') || eventType;
 		const status = codexItemStatus(eventType);
@@ -1358,7 +1411,22 @@
 			return text ? prefixedLines('[codex output]', text) : [`[codex output]${statusText}`];
 		}
 
-		const text = textFromRecord(item, ['message', 'text', 'content', 'output', 'error', 'delta']);
+		if (itemType === 'command_execution') {
+			return formatCodexCommandExecution(eventType, item);
+		}
+
+		const text = textFromRecord(item, [
+			'message',
+			'text',
+			'content',
+			'output',
+			'error',
+			'delta',
+			'command',
+			'cmd',
+			'arguments',
+			'args'
+		]);
 		return text
 			? prefixedLines(`[codex ${itemType}]`, text)
 			: [`[codex] ${eventType}: ${itemType}${statusText}`];
